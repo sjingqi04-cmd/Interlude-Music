@@ -30,6 +30,11 @@ class SleepTimer(
     }
 
     private var sleepTimerJob: Job? = null
+    // Plain volatile flag = single source of truth for "timer running". Compose
+    // mutableStateOf values live in snapshots and can read stale across the
+    // service/UI boundary; a volatile field is always consistent.
+    @Volatile
+    private var activeFlag: Boolean = false
     var triggerTime by mutableLongStateOf(-1L)
         private set
     var pauseWhenSongEnd by mutableStateOf(false)
@@ -39,9 +44,12 @@ class SleepTimer(
     var fadeOutEnabled by mutableStateOf(false)
         private set
     val isActive: Boolean
-        get() = triggerTime != -1L || pauseWhenSongEnd
+        get() = activeFlag
 
-    private fun notifyActive() = onActiveChanged(isActive)
+    private fun setActive(active: Boolean) {
+        activeFlag = active
+        onActiveChanged(active)
+    }
 
     fun start(minute: Int) {
         start(
@@ -106,7 +114,7 @@ class SleepTimer(
                     }
                 }
         }
-        notifyActive()
+        setActive(true)
     }
 
     /**
@@ -128,7 +136,7 @@ class SleepTimer(
         fadeOutEnabled = false
         triggerTime = -1L
         updateVolumeMultiplier(1f)
-        notifyActive()
+        setActive(false)
     }
 
     override fun onMediaItemTransition(
@@ -156,7 +164,7 @@ class SleepTimer(
         fadeOutEnabled = false
         triggerTime = -1L
         updateVolumeMultiplier(1f)
-        notifyActive()
+        setActive(false)
         player.pause()
     }
 

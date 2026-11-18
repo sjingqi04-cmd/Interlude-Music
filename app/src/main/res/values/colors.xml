@@ -2,6 +2,10 @@
 <resources>
     <color name="ic_launcher_static_background">#000000</color>
 
+    <!-- Launch window background. Matches the app surface so the cold start does
+         not flash a mismatched colour before the first Compose frame. -->
+    <color name="launch_background">#FFFBFE</color>
+
     <!-- Widget colors for light mode -->
     <color name="widget_text_primary">#1C1B1F</color>
     <color name="widget_text_secondary">#49454F</color>

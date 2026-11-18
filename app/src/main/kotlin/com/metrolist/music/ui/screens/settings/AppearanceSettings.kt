@@ -56,7 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
-import com.metrolist.music.ui.icons.painterResource
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -74,17 +74,14 @@ import com.metrolist.music.constants.DefaultOpenTabKey
 import com.metrolist.music.constants.DensityScale
 import com.metrolist.music.constants.DensityScaleKey
 import com.metrolist.music.constants.DynamicThemeKey
-import com.metrolist.music.constants.ForceDynamicColorKey
 
 import com.metrolist.music.constants.EnableHighRefreshRateKey
 import com.metrolist.music.constants.EnableLandscapeScalingKey
 import com.metrolist.music.constants.ForceBottomNavBarKey
-import com.metrolist.music.constants.ForcePortraitUiKey
 import com.metrolist.music.constants.GridItemSize
 import com.metrolist.music.constants.GridItemsSizeKey
 import com.metrolist.music.constants.HidePlayerThumbnailKey
 import com.metrolist.music.constants.HideStatusBarOnFullscreenKey
-import com.metrolist.music.constants.SoftIconsKey
 import com.metrolist.music.constants.LibraryFilter
 import com.metrolist.music.constants.ListenTogetherInTopBarKey
 import com.metrolist.music.constants.LyricsAnimationStyle
@@ -99,8 +96,6 @@ import com.metrolist.music.constants.LyricsFadeInDurationKey
 import com.metrolist.music.constants.LyricsFadeOutDurationKey
 import com.metrolist.music.constants.MiniPlayerBackgroundStyle
 import com.metrolist.music.constants.MiniPlayerBackgroundStyleKey
-import com.metrolist.music.constants.DefaultMiniPlayerCornerRadius
-import com.metrolist.music.constants.MiniPlayerCornerRadiusKey
 import com.metrolist.music.constants.PlayerBackgroundStyle
 import com.metrolist.music.constants.PlayerBackgroundStyleKey
 import com.metrolist.music.constants.PlayerButtonsStyle
@@ -164,12 +159,6 @@ fun AppearanceSettings(
             defaultValue = true,
         )
 
-    val (forceDynamicColor, onForceDynamicColorChange) =
-        rememberPreference(
-            ForceDynamicColorKey,
-            defaultValue = false,
-        )
-
     val (enableHighRefreshRate, onEnableHighRefreshRateChange) =
         rememberPreference(
             EnableHighRefreshRateKey,
@@ -196,7 +185,7 @@ fun AppearanceSettings(
     val (miniPlayerBackground, onMiniPlayerBackgroundChange) =
         rememberEnumPreference(
             MiniPlayerBackgroundStyleKey,
-            defaultValue = MiniPlayerBackgroundStyle.FROSTED_GLASS,
+            defaultValue = MiniPlayerBackgroundStyle.BLUR,
         )
 
     val availableMiniPlayerBackgroundStyles =
@@ -205,13 +194,6 @@ fun AppearanceSettings(
         }
 
     var showMiniPlayerBackgroundDialog by rememberSaveable { mutableStateOf(false) }
-
-    val (miniPlayerCornerRadius, onMiniPlayerCornerRadiusChange) =
-        rememberPreference(
-            MiniPlayerCornerRadiusKey,
-            defaultValue = DefaultMiniPlayerCornerRadius,
-        )
-    var showMiniPlayerCornerRadiusDialog by rememberSaveable { mutableStateOf(false) }
 
     val (hidePlayerThumbnail, onHidePlayerThumbnailChange) =
         rememberPreference(
@@ -258,7 +240,7 @@ fun AppearanceSettings(
     val (spotifyConnected) = rememberPreference(SpotifyConnectedKey, defaultValue = false)
     val spotifyCanvasActive = spotifyCanvasEnabled && (isFullArtStyle || isImmersiveStyle)
     val (speedDialCarouselOutline, onSpeedDialCarouselOutlineChange) = rememberPreference(SpeedDialCarouselOutlineKey, defaultValue = false)
-    val (iconRoundedness, onIconRoundednessChange) = rememberPreference(IconRoundednessKey, defaultValue = 8f)
+    val (iconRoundedness, onIconRoundednessChange) = rememberPreference(IconRoundednessKey, defaultValue = 3f)
     var showIconRoundednessDialog by rememberSaveable { mutableStateOf(false) }
     val (frostedUi, onFrostedUiChange) = rememberPreference(FrostedGlassUiKey, defaultValue = DefaultFrostedGlassUi)
     val (frostedBlurLevel, onFrostedBlurLevelChange) = rememberPreference(FrostedGlassBlurLevelKey, defaultValue = DefaultFrostedGlassBlurLevel)
@@ -296,7 +278,6 @@ fun AppearanceSettings(
             HideStatusBarOnFullscreenKey,
             defaultValue = false,
         )
-    val (softIcons, onSoftIconsChange) = rememberPreference(SoftIconsKey, defaultValue = true)
     val (respectAgentPositioning, onRespectAgentPositioningChange) = rememberPreference(RespectAgentPositioningKey, defaultValue = true)
 
     val (lyricsGlowEffect, onLyricsGlowEffectChange) = rememberPreference(LyricsGlowEffectKey, defaultValue = false)
@@ -346,11 +327,6 @@ fun AppearanceSettings(
     val (forceBottomNav, onForceBottomNavChange) =
         rememberPreference(
             ForceBottomNavBarKey,
-            defaultValue = false,
-        )
-    val (forcePortraitUi, onForcePortraitUiChange) =
-        rememberPreference(
-            ForcePortraitUiKey,
             defaultValue = false,
         )
     val (slimNav, onSlimNavChange) =
@@ -723,7 +699,7 @@ fun AppearanceSettings(
                 showIconRoundednessDialog = false
             },
             buttons = {
-                TextButton(onClick = { tempRoundedness = 8f }) {
+                TextButton(onClick = { tempRoundedness = 3f }) {
                     Text(stringResource(R.string.reset))
                 }
                 Spacer(modifier = Modifier.weight(1f))
@@ -830,51 +806,6 @@ fun AppearanceSettings(
                     value = tempBlurLevel,
                     onValueChange = { tempBlurLevel = it },
                     valueRange = 5f..100f,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        }
-    }
-
-    if (showMiniPlayerCornerRadiusDialog) {
-        var tempRadius by remember { mutableFloatStateOf(miniPlayerCornerRadius) }
-
-        DefaultDialog(
-            onDismiss = { showMiniPlayerCornerRadiusDialog = false },
-            buttons = {
-                TextButton(onClick = { tempRadius = DefaultMiniPlayerCornerRadius }) {
-                    Text(stringResource(R.string.reset))
-                }
-                Spacer(modifier = Modifier.weight(1f))
-                TextButton(onClick = { showMiniPlayerCornerRadiusDialog = false }) {
-                    Text(stringResource(android.R.string.cancel))
-                }
-                TextButton(onClick = {
-                    onMiniPlayerCornerRadiusChange(tempRadius.roundToInt().toFloat())
-                    showMiniPlayerCornerRadiusDialog = false
-                }) {
-                    Text(stringResource(android.R.string.ok))
-                }
-            },
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(16.dp),
-            ) {
-                Text(
-                    text = stringResource(R.string.mini_player_corner_radius),
-                    style = MaterialTheme.typography.headlineSmall,
-                    modifier = Modifier.padding(bottom = 16.dp),
-                )
-                Text(
-                    text = "${tempRadius.roundToInt()} dp",
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.padding(bottom = 16.dp),
-                )
-                Slider(
-                    value = tempRadius,
-                    onValueChange = { tempRadius = it },
-                    valueRange = 0f..32f,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -1152,7 +1083,6 @@ fun AppearanceSettings(
                     MiniPlayerBackgroundStyle.BLUR -> stringResource(R.string.player_background_blur)
                     MiniPlayerBackgroundStyle.GRADIENT -> stringResource(R.string.gradient)
                     MiniPlayerBackgroundStyle.PURE_BLACK -> stringResource(R.string.pure_black)
-                    MiniPlayerBackgroundStyle.FROSTED_GLASS -> stringResource(R.string.frosted_glass)
                 }
             },
         )
@@ -1559,32 +1489,6 @@ fun AppearanceSettings(
                                 onClick = { onDynamicThemeChange(!dynamicTheme) },
                             ),
                         )
-                        if (dynamicTheme) {
-                            add(
-                                Material3SettingsItem(
-                                    icon = painterResource(R.drawable.palette),
-                                    title = { Text(stringResource(R.string.force_dynamic_color)) },
-                                    description = { Text(stringResource(R.string.force_dynamic_color_desc)) },
-                                    trailingContent = {
-                                        Switch(
-                                            checked = forceDynamicColor,
-                                            onCheckedChange = onForceDynamicColorChange,
-                                            thumbContent = {
-                                                Icon(
-                                                    painter =
-                                                        painterResource(
-                                                            id = if (forceDynamicColor) R.drawable.check else R.drawable.close,
-                                                        ),
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(SwitchDefaults.IconSize),
-                                                )
-                                            },
-                                        )
-                                    },
-                                    onClick = { onForceDynamicColorChange(!forceDynamicColor) },
-                                ),
-                            )
-                        }
                     }
 
                     add(
@@ -1617,30 +1521,6 @@ fun AppearanceSettings(
                                 )
                             },
                             onClick = { onFrostedToggle(!frostedUi) },
-                        ),
-                    )
-                    add(
-                        Material3SettingsItem(
-                            icon = painterResource(R.drawable.palette),
-                            title = { Text(stringResource(R.string.soft_icons)) },
-                            description = { Text(stringResource(R.string.soft_icons_desc)) },
-                            trailingContent = {
-                                Switch(
-                                    checked = softIcons,
-                                    onCheckedChange = onSoftIconsChange,
-                                    thumbContent = {
-                                        Icon(
-                                            painter =
-                                                painterResource(
-                                                    id = if (softIcons) R.drawable.check else R.drawable.close,
-                                                ),
-                                            contentDescription = null,
-                                            modifier = Modifier.size(SwitchDefaults.IconSize),
-                                        )
-                                    },
-                                )
-                            },
-                            onClick = { onSoftIconsChange(!softIcons) },
                         ),
                     )
                     if (frostedUi) {
@@ -1722,19 +1602,10 @@ fun AppearanceSettings(
                                             MiniPlayerBackgroundStyle.BLUR -> stringResource(R.string.player_background_blur)
                                             MiniPlayerBackgroundStyle.GRADIENT -> stringResource(R.string.gradient)
                                             MiniPlayerBackgroundStyle.PURE_BLACK -> stringResource(R.string.pure_black)
-                                            MiniPlayerBackgroundStyle.FROSTED_GLASS -> stringResource(R.string.frosted_glass)
                                         },
                                 )
                             },
                             onClick = { showMiniPlayerBackgroundDialog = true },
-                        ),
-                    )
-                    add(
-                        Material3SettingsItem(
-                            icon = painterResource(R.drawable.gradient),
-                            title = { Text(text = stringResource(R.string.mini_player_corner_radius)) },
-                            description = { Text("${miniPlayerCornerRadius.roundToInt()} dp") },
-                            onClick = { showMiniPlayerCornerRadiusDialog = true },
                         ),
                     )
                 },
@@ -2384,27 +2255,6 @@ fun AppearanceSettings(
                             )
                         },
                         onClick = { onForceBottomNavChange(!forceBottomNav) },
-                    ),
-                    Material3SettingsItem(
-                        icon = painterResource(R.drawable.nav_bar),
-                        title = { Text(stringResource(R.string.force_portrait_ui)) },
-                        trailingContent = {
-                            Switch(
-                                checked = forcePortraitUi,
-                                onCheckedChange = onForcePortraitUiChange,
-                                thumbContent = {
-                                    Icon(
-                                        painter =
-                                            painterResource(
-                                                id = if (forcePortraitUi) R.drawable.check else R.drawable.close,
-                                            ),
-                                        contentDescription = null,
-                                        modifier = Modifier.size(SwitchDefaults.IconSize),
-                                    )
-                                },
-                            )
-                        },
-                        onClick = { onForcePortraitUiChange(!forcePortraitUi) },
                     ),
                     Material3SettingsItem(
                         icon = painterResource(R.drawable.nav_bar),

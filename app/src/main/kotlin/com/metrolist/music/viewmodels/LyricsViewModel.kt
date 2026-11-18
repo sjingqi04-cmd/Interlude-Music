@@ -69,14 +69,15 @@ class LyricsViewModel @Inject constructor() : ViewModel() {
             // Romanize in the background after the UI has been updated
             if (lyrics != null && lyrics != LYRICS_NOT_FOUND && enabledLanguages.isNotEmpty()) {
                 launch(Dispatchers.Default) {
+                    val songLanguage =
+                        if (romanizeCyrillicByLine) null
+                        else LyricsUtils.detectLanguage(lyrics, enabledLanguages)
                     processedLines.forEach { entry ->
                         if (entry == LyricsEntry.HEAD_LYRICS_ENTRY) return@forEach
-                        entry.romanizedTextFlow.value = LyricsUtils.romanize(
-                            text = lyrics,
-                            line = entry.text,
-                            enabledLanguages = enabledLanguages,
-                            romanizeCyrillicByLine = romanizeCyrillicByLine
-                        )
+                        val language =
+                            if (romanizeCyrillicByLine) LyricsUtils.detectLanguage(entry.text, enabledLanguages)
+                            else songLanguage
+                        entry.romanizedTextFlow.value = LyricsUtils.romanizeLine(entry.text, language)
                     }
                 }
             }

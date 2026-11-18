@@ -67,13 +67,11 @@ import androidx.compose.material3.ContainedLoadingIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderState
@@ -110,7 +108,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import com.metrolist.music.ui.icons.painterResource
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
@@ -219,11 +217,6 @@ import kotlinx.coroutines.withContext
 import kotlin.math.max
 import kotlin.math.roundToInt
 import com.metrolist.music.ui.component.Icon as MIcon
-import com.metrolist.music.constants.SleepTimerDefaultKey
-import com.metrolist.music.constants.SleepTimerFadeOutKey
-import com.metrolist.music.constants.SleepTimerStopAfterCurrentSongKey
-
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BottomSheetPlayer(
@@ -632,8 +625,8 @@ fun BottomSheetPlayer(
         .getDownload(mediaMetadata?.id ?: "")
         .collectAsStateWithLifecycle(initialValue = null)
 
-    // Single source of truth: the service emits true on start() and false on
-    // clear()/natural expiry, so the cancel button and countdown stay in sync.
+    // sleepTimerActive is driven by SleepTimer.setActive() via a volatile flag,
+    // so this state is exact regardless of Compose snapshot timing.
     val sleepTimerEnabled by playerConnection.service.sleepTimerActive.collectAsStateWithLifecycle()
 
     var sleepTimerTimeLeft by remember {
@@ -661,21 +654,17 @@ fun BottomSheetPlayer(
 
     val sleepTimerDefault by rememberPreference(SleepTimerDefaultKey, 30f)
     var sleepTimerValue by remember { mutableFloatStateOf(sleepTimerDefault) }
-    var customMinutesText by remember { mutableStateOf(sleepTimerDefault.roundToInt().toString()) }
     val isAtDefault by remember {
         derivedStateOf { sleepTimerValue.roundToInt() == sleepTimerDefault.roundToInt() }
     }
-    LaunchedEffect(sleepTimerDefault) {
-        sleepTimerValue = sleepTimerDefault
-        customMinutesText = sleepTimerDefault.roundToInt().toString()
-    }
-    LaunchedEffect(sleepTimerValue) {
-        val shown = sleepTimerValue.roundToInt().toString()
-        if (customMinutesText != shown) customMinutesText = shown
-    }
+    LaunchedEffect(sleepTimerDefault) { sleepTimerValue = sleepTimerDefault }
     val sleepTimerStopAfterCurrentSong by rememberPreference(SleepTimerStopAfterCurrentSongKey, false)
     val sleepTimerFadeOut by rememberPreference(SleepTimerFadeOutKey, false)
 
+    // Dialog-local copy of the on/off state: OK flips it immediately, and it
+    // re-syncs whenever the service flow changes (natural expiry, elsewhere).
+    var dialogTimerOn by remember { mutableStateOf(sleepTimerEnabled) }
+    LaunchedEffect(sleepTimerEnabled) { dialogTimerOn = sleepTimerEnabled }
 
     if (showSleepTimerDialog) {
         AlertDialog(
@@ -691,14 +680,24 @@ fun BottomSheetPlayer(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        showSleepTimerDialog = false
-                        val minutes = customMinutesText.toIntOrNull()?.coerceIn(1, 600)
-                            ?: sleepTimerValue.roundToInt()
-                        playerConnection.service.sleepTimer?.start(
-                            minute = minutes,
-                            stopAfterCurrentSong = sleepTimerStopAfterCurrentSong,
-                            fadeOut = sleepTimerFadeOut,
-                        )
+                        val minutes = sleepTimerValue.roundToInt().coerceIn(1, 600)
+                        val started = runCatching {
+                            playerConnection.service.sleepTimer?.start(
+                                minute = minutes,
+                                stopAfterCurrentSong = sleepTimerStopAfterCurrentSong,
+                                fadeOut = sleepTimerFadeOut,
+                            )
+                        }.isSuccess
+                        if (started) {
+                            // Flip to "running" here as well so the new state shows up
+                            // even before the flow round-trips through the service.
+                            dialogTimerOn = true
+                            Toast.makeText(
+                                context,
+                                String.format(sleepTimerDefaultSetTemplate, minutes),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
                     },
                 ) {
                     Text(stringResource(android.R.string.ok))
@@ -725,27 +724,9 @@ fun BottomSheetPlayer(
 
                     Slider(
                         value = sleepTimerValue.coerceIn(5f, 120f),
-                        onValueChange = {
-                            sleepTimerValue = it
-                            customMinutesText = it.roundToInt().toString()
-                        },
+                        onValueChange = { sleepTimerValue = it },
                         valueRange = 5f..120f,
                         steps = (120 - 5) / 5 - 1,
-                    )
-
-                    OutlinedTextField(
-                        value = customMinutesText,
-                        onValueChange = { input ->
-                            val filtered = input.filter { it.isDigit() }.take(3)
-                            customMinutesText = filtered
-                            filtered.toIntOrNull()?.coerceIn(1, 600)?.toFloat()?.let {
-                                sleepTimerValue = it
-                            }
-                        },
-                        label = { Text(stringResource(R.string.sleep_timer_custom_minutes)) },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.fillMaxWidth(),
                     )
 
                     Spacer(Modifier.height(8.dp))
@@ -819,17 +800,47 @@ fun BottomSheetPlayer(
                         }
                     }
 
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = {
-                            // clear() is idempotent: always allow cancelling, even if the
-                            // enabled snapshot hasn't caught up yet.
-                            playerConnection.service.sleepTimer?.clear()
-                            showSleepTimerDialog = false
+                    // Clear on/off status at a glance: running -> highlighted filled
+                    // button; off -> dimmed, disabled outline button.
+                    Text(
+                        text = if (dialogTimerOn) {
+                            stringResource(
+                                R.string.sleep_timer_running,
+                                makeTimeString(sleepTimerTimeLeft.coerceAtLeast(0L)),
+                            )
+                        } else {
+                            stringResource(R.string.sleep_timer_not_running)
                         },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(stringResource(R.string.sleep_timer_off))
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (dialogTimerOn) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    if (dialogTimerOn) {
+                        Button(
+                            onClick = {
+                                playerConnection.service.sleepTimer?.clear()
+                                dialogTimerOn = false
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary,
+                            ),
+                        ) {
+                            Text(stringResource(R.string.sleep_timer_off))
+                        }
+                    } else {
+                        OutlinedButton(
+                            onClick = {},
+                            enabled = false,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(stringResource(R.string.sleep_timer_off))
+                        }
                     }
                 }
             },
@@ -2172,7 +2183,6 @@ fun BottomSheetPlayer(
                 )
                 if (useSpotifyStyle) {
                     val immersiveLyrics by playerConnection.currentLyrics.collectAsStateWithLifecycle(initialValue = null)
-                    LaunchedEffect(showInlineLyrics) { if (!showInlineLyrics) isFullScreen = false }
                     SpotifyStylePlayerContent(
                         mediaMetadata = mediaMetadata,
                         isPlaying = effectiveIsPlaying,
@@ -2208,7 +2218,8 @@ fun BottomSheetPlayer(
                                             }
                                         },
                                         onDismiss = menuState::dismiss,
-                                        onShowSleepTimer = { showSleepTimerDialog = true },
+                                        isFullScreen = isFullScreen,
+                                        onToggleFullScreen = { isFullScreen = !isFullScreen },
                                     )
                                 }
                             }
@@ -2228,13 +2239,21 @@ fun BottomSheetPlayer(
                         onPrevious = playerConnection::seekToPrevious,
                         onNext = playerConnection::seekToNext,
                         onFavorite = playerConnection::toggleLike,
+                        onSleepTimer = {
+                            if (sleepTimerEnabled) {
+                                playerConnection.service.sleepTimer?.clear()
+                            } else {
+                                showSleepTimerDialog = true
+                            }
+                        },
+                        sleepTimerActive = sleepTimerEnabled,
                         onShuffle = { playerConnection.player.shuffleModeEnabled = !shuffleModeEnabled },
                         onRepeat = { playerConnection.player.toggleRepeatMode() },
                         onQueue = { queueSheetState.expandSoft() },
-                        showLyrics = showInlineLyrics,
-                        onToggleLyrics = { showInlineLyrics = !showInlineLyrics },
                         isFullScreen = isFullScreen,
                         onFullScreen = { isFullScreen = !isFullScreen },
+                        showLyrics = showInlineLyrics,
+                        onToggleLyrics = { showInlineLyrics = !showInlineLyrics },
                         queueProgress = { queueSheetState.progress },
                         overlay = {
                             androidx.compose.animation.AnimatedVisibility(
@@ -2243,15 +2262,11 @@ fun BottomSheetPlayer(
                                 exit = androidx.compose.animation.fadeOut(),
                             ) {
                                 Box(Modifier.fillMaxSize()) {
-                                    val lyricsHeightFraction by animateFloatAsState(
-                                        targetValue = if (isFullScreen) 0.8f else 0.7f,
-                                        label = "immersiveLyricsHeight",
-                                    )
                                     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)))
                                     Box(
                                         Modifier
                                             .fillMaxWidth()
-                                            .fillMaxHeight(lyricsHeightFraction)
+                                            .fillMaxHeight(0.7f)
                                             .align(Alignment.TopCenter)
                                             .padding(top = 72.dp)
                                             .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
@@ -2291,7 +2306,6 @@ fun BottomSheetPlayer(
                     )
                 } else if (useFullArtTest) {
                     val fullArtLyrics by playerConnection.currentLyrics.collectAsStateWithLifecycle(initialValue = null)
-                    LaunchedEffect(showInlineLyrics) { if (!showInlineLyrics) isFullScreen = false }
                     FullArtPlayerContent(
                         artworkUrl = mediaMetadata?.thumbnailUrl,
                         title = mediaMetadata?.title ?: "",
@@ -2315,6 +2329,14 @@ fun BottomSheetPlayer(
                                          onPrevious = playerConnection::seekToPrevious,
                                          onNext = playerConnection::seekToNext,
                                          onFavorite = playerConnection::toggleLike,
+                                         onSleepTimer = {
+                                             if (sleepTimerEnabled) {
+                                                 playerConnection.service.sleepTimer?.clear()
+                                             } else {
+                                                 showSleepTimerDialog = true
+                                             }
+                                         },
+                                         sleepTimerActive = sleepTimerEnabled,
                                          onMore = {
                             mediaMetadata?.let { md ->
                                 menuState.show {
@@ -2340,7 +2362,8 @@ fun BottomSheetPlayer(
                                             }
                                         },
                                         onDismiss = menuState::dismiss,
-                                        onShowSleepTimer = { showSleepTimerDialog = true },
+                                        isFullScreen = isFullScreen,
+                                        onToggleFullScreen = { isFullScreen = !isFullScreen },
                                     )
                                 }
                             }
@@ -2663,17 +2686,18 @@ fun InlineLyricsView(
             }
         }
 
+    val lyricsHelper = remember(context) {
+        EntryPointAccessors.fromApplication(
+            context.applicationContext,
+            com.metrolist.music.di.LyricsHelperEntryPoint::class.java,
+        ).lyricsHelper()
+    }
+
     LaunchedEffect(mediaMetadata?.id, currentLyrics) {
-        if (mediaMetadata != null && currentLyrics == null) {
+        if (mediaMetadata != null && lyricsHelper.needsFetch(currentLyrics, mediaMetadata.id)) {
             delay(500)
             coroutineScope.launch(Dispatchers.IO) {
                 try {
-                    val entryPoint =
-                        EntryPointAccessors.fromApplication(
-                            context.applicationContext,
-                            com.metrolist.music.di.LyricsHelperEntryPoint::class.java,
-                        )
-                    val lyricsHelper = entryPoint.lyricsHelper()
                     val fetchedLyricsWithProvider = lyricsHelper.getLyrics(mediaMetadata)
                     database.query {
                         upsert(LyricsEntity(mediaMetadata.id, fetchedLyricsWithProvider.lyrics, fetchedLyricsWithProvider.provider))
@@ -2707,13 +2731,7 @@ fun InlineLyricsView(
         withContext(Dispatchers.IO) {
             try {
                 val existing = database.lyrics(nextId).first()
-                if (existing != null) return@withContext
-                val entryPoint =
-                    EntryPointAccessors.fromApplication(
-                        context.applicationContext,
-                        com.metrolist.music.di.LyricsHelperEntryPoint::class.java,
-                    )
-                val lyricsHelper = entryPoint.lyricsHelper()
+                if (!lyricsHelper.needsFetch(existing, nextId)) return@withContext
                 val fetched = lyricsHelper.getLyrics(nextMetadata)
                 database.query {
                     upsert(LyricsEntity(nextId, fetched.lyrics, fetched.provider))

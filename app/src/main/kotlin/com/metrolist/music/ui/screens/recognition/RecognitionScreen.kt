@@ -8,7 +8,11 @@ package com.metrolist.music.ui.screens.recognition
 import com.metrolist.music.ui.component.GlassTopAppBar
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -82,7 +86,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import com.metrolist.music.ui.icons.painterResource
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -104,6 +108,7 @@ import com.metrolist.music.R
 import com.metrolist.music.constants.ContinuousRecognitionKey
 import com.metrolist.music.db.entities.RecognitionHistory
 import com.metrolist.music.recognition.MusicRecognitionService
+import com.metrolist.music.recognition.RecognitionForegroundService
 import com.metrolist.music.recognition.RecognitionPlayback
 import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.utils.backToMain
@@ -133,7 +138,8 @@ fun RecognitionScreen(
     // recognition that must not be cancelled; Success/NoMatch/Error are results pending
     // display and history saving.
     LaunchedEffect(Unit) {
-        if (com.metrolist.music.recognition.MusicRecognitionService.recognitionStatus.value
+        if (!com.metrolist.music.recognition.MusicRecognitionService.overlayActive &&
+            com.metrolist.music.recognition.MusicRecognitionService.recognitionStatus.value
                 is RecognitionStatus.Ready
         ) {
             com.metrolist.music.recognition.MusicRecognitionService
@@ -143,8 +149,10 @@ fun RecognitionScreen(
 
     DisposableEffect(Unit) {
         onDispose {
-            com.metrolist.music.recognition.MusicRecognitionService
-                .reset()
+            if (!com.metrolist.music.recognition.MusicRecognitionService.overlayActive) {
+                com.metrolist.music.recognition.MusicRecognitionService
+                    .reset()
+            }
         }
     }
 
@@ -157,6 +165,7 @@ fun RecognitionScreen(
     LaunchedEffect(recognitionStatus) {
         val status = recognitionStatus
         if (status is RecognitionStatus.Success &&
+            !com.metrolist.music.recognition.MusicRecognitionService.overlayActive &&
             com.metrolist.music.recognition.MusicRecognitionService
                 .takePendingPlayback()
         ) {
@@ -188,15 +197,31 @@ fun RecognitionScreen(
         )
     }
 
+    var pendingOverlay by remember { mutableStateOf(false) }
+
+    fun startFloatingRecognizer() {
+        ContextCompat.startForegroundService(
+            context,
+            Intent(context, RecognitionForegroundService::class.java).apply {
+                action = RecognitionForegroundService.ACTION_SHOW_OVERLAY
+            },
+        )
+    }
+
     val permissionLauncher =
         rememberLauncherForActivityResult(
             contract = ActivityResultContracts.RequestPermission(),
         ) { isGranted ->
             hasPermission = isGranted
             if (isGranted) {
-                coroutineScope.launch {
-                    com.metrolist.music.recognition.MusicRecognitionService
-                        .recognize(context, continuous = continuousListening.value)
+                if (pendingOverlay) {
+                    pendingOverlay = false
+                    startFloatingRecognizer()
+                } else {
+                    coroutineScope.launch {
+                        com.metrolist.music.recognition.MusicRecognitionService
+                            .recognize(context, continuous = continuousListening.value)
+                    }
                 }
             }
         }
@@ -227,8 +252,13 @@ fun RecognitionScreen(
     }
 
     fun saveToHistory(result: RecognitionResult) {
-        // Skip if the widget service already persisted this result to avoid a duplicate entry
-        if (com.metrolist.music.recognition.MusicRecognitionService.resultSavedExternally) return
+        // The widget service and the floating recognizer persist their own results; the flag is
+        // only set after their insert lands, so the overlay needs its own guard against a double write.
+        if (com.metrolist.music.recognition.MusicRecognitionService.resultSavedExternally ||
+            com.metrolist.music.recognition.MusicRecognitionService.overlayActive
+        ) {
+            return
+        }
         coroutineScope.launch(Dispatchers.IO) {
             database.query {
                 insert(
@@ -271,6 +301,38 @@ fun RecognitionScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = {
+                            when {
+                                !Settings.canDrawOverlays(context) -> {
+                                    Toast
+                                        .makeText(
+                                            context,
+                                            R.string.recognition_overlay_permission,
+                                            Toast.LENGTH_LONG,
+                                        ).show()
+                                    context.startActivity(
+                                        Intent(
+                                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                            Uri.parse("package:${context.packageName}"),
+                                        ),
+                                    )
+                                }
+
+                                !hasPermission -> {
+                                    pendingOverlay = true
+                                    permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                }
+
+                                else -> startFloatingRecognizer()
+                            }
+                        },
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.picture_in_picture),
+                            contentDescription = stringResource(R.string.recognition_overlay),
+                        )
+                    }
                     IconButton(onClick = { navController.navigate("recognition_history") }) {
                         Icon(
                             painter = painterResource(R.drawable.history),

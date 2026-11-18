@@ -25,6 +25,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.guava.future
 import timber.log.Timber
 
+// Sources go up to 1200px, but the notification large icon is ~64dp and Auto art is a few
+// hundred px. Decoding full size costs ~5.8MB per bitmap, doubled by createIndependentCopy.
+private const val ARTWORK_MAX_PX = 512
+
 class CoilBitmapLoader(
     private val context: Context,
     private val scope: CoroutineScope,
@@ -64,6 +68,7 @@ class CoilBitmapLoader(
                     ImageRequest
                         .Builder(context)
                         .data(uri)
+                        .size(ARTWORK_MAX_PX)
                         .allowHardware(false)
                         .build()
 

@@ -182,9 +182,9 @@ fun ExperimentalLyrics(
     val aiProvider by rememberPreference(AiProviderKey, "Free")
     val openRouterBaseUrl by rememberPreference(OpenRouterBaseUrlKey, OpenRouterDefaultBaseUrl)
     val openRouterModel by rememberPreference(OpenRouterModelKey, OpenRouterDefaultModel)
-    val translateLanguage by rememberPreference(TranslateLanguageKey, "en")
+    val translateLanguage by rememberPreference(TranslateLanguageKey, "zh-CN")
     val translateMode by rememberPreference(TranslateModeKey, "Literal")
-    val autoTranslateLyrics by rememberPreference(AutoTranslateLyricsKey, false)
+    val autoTranslateLyrics by rememberPreference(AutoTranslateLyricsKey, true)
     val deeplFormality by rememberPreference(DeeplFormalityKey, "default")
     val aiSystemPrompt by rememberPreference(AiSystemPromptKey, "")
     
@@ -303,7 +303,7 @@ fun ExperimentalLyrics(
                 provider = aiProvider,
                 deeplApiKey = deeplApiKey,
                 deeplFormality = deeplFormality,
-                useStreaming = true,
+                useStreaming = aiProvider != "Free",
                 songId = currentSong?.id ?: "",
                 database = database,
                 systemPrompt = aiSystemPrompt,
@@ -341,7 +341,7 @@ fun ExperimentalLyrics(
                     provider = aiProvider,
                     deeplApiKey = deeplApiKey,
                     deeplFormality = deeplFormality,
-                    useStreaming = true,
+                    useStreaming = aiProvider != "Free",
                     songId = currentSong?.id ?: "",
                     database = database,
                     systemPrompt = aiSystemPrompt,

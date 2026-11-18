@@ -113,10 +113,9 @@ internal fun buildSpeedDialItems(
     keepListening: List<YTItem>,
     quickPicks: List<YTItem>,
     home: List<YTItem>,
-    artistPicks: List<YTItem> = emptyList(),
     limit: Int = SPEED_DIAL_SIZE,
 ): List<YTItem> =
-    (pinned + keepListening + quickPicks + artistPicks + home)
+    (pinned + keepListening + quickPicks + home)
         .distinctBy { it.id }
         .take(limit)
 
@@ -160,9 +159,6 @@ class HomeViewModel @Inject constructor(
     val allLocalItems = MutableStateFlow<List<LocalItem>>(emptyList())
     val allYtItems = MutableStateFlow<List<YTItem>>(emptyList())
 
-    /** Songs by followed artists, so Speed Dial follows the user's taste instead of falling back to YouTube's generic home feed. */
-    private val artistPicks = MutableStateFlow<List<YTItem>>(emptyList())
-
     val pinnedSpeedDialItems: StateFlow<List<SpeedDialItem>> =
         database.speedDialDao.getAll()
             .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
@@ -176,12 +172,12 @@ class HomeViewModel @Inject constructor(
     /** Every speed dial candidate in priority order; [homeFeed] trims it after removing items shown elsewhere. */
     private val speedDialPool: StateFlow<List<YTItem>> =
         combine(
-            combine(database.speedDialDao.getAll(), artistPicks) { pinned, picks -> pinned to picks },
+            database.speedDialDao.getAll(),
             keepListening,
             quickPicks,
             homePage,
             excludedIds,
-        ) { (pinned, picks), keepListening, quick, home, excluded ->
+        ) { pinned, keepListening, quick, home, excluded ->
             buildSpeedDialItems(
                 pinned = pinned.map { it.toYTItem() },
                 keepListening =
@@ -226,7 +222,6 @@ class HomeViewModel @Inject constructor(
                             thumbnail = song.thumbnailUrl ?: "",
                         )
                     }.filterNot { it.id in excluded },
-                artistPicks = picks.filterNot { it.id in excluded },
                 home = home?.sections.orEmpty().flatMap { it.items }.filterNot { it.id in excluded },
                 limit = Int.MAX_VALUE,
             )
@@ -464,33 +459,6 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    /** Songs from the followed artists the user likes most, interleaved so no single artist fills Speed Dial. */
-    private suspend fun getArtistPicks() {
-        val hideExplicit = context.dataStore.get(HideExplicitKey, false)
-        val hideVideoSongs = context.dataStore.get(HideVideoSongsKey, false)
-        val blocked = NotInterested.current(context)
-        val artistScores = TasteProfile.artistScores(database, blocked.artists)
-        val seeds = TasteProfile.pickWeighted(
-            database.bookmarkedArtistEntitiesByNameAsc().filter { it.isYouTubeArtist },
-            6,
-        ) { artistScores[it.id] ?: 0.0 }
-
-        val perArtist = coroutineScope {
-            seeds.map { seed ->
-                async(Dispatchers.IO) {
-                    YouTube.artist(seed.id).getOrNull()?.sections.orEmpty()
-                        .flatMap { it.items }
-                        .filterIsInstance<SongItem>()
-                        .filter { (!hideExplicit || !it.explicit) && (!hideVideoSongs || !it.isVideoSong) }
-                        .filterNot { blocked.blocks(it) }
-                        .take(12)
-                }
-            }.awaitAll()
-        }
-        val rounds = perArtist.maxOfOrNull { it.size } ?: 0
-        artistPicks.value = (0 until rounds).flatMap { i -> perArtist.mapNotNull { it.getOrNull(i) } }
-    }
-
     private suspend fun getQuickPicks() {
         val hideVideoSongs = context.dataStore.get(HideVideoSongsKey, false)
         val excluded = excludedIds.first()
@@ -689,8 +657,6 @@ class HomeViewModel @Inject constructor(
         // isLoading is set to false as soon as all Phase 1 tasks complete so the UI appears quickly.
         coroutineScope {
             launch(Dispatchers.IO) { getQuickPicks() }
-
-            launch(Dispatchers.IO) { getArtistPicks() }
 
             launch(Dispatchers.IO) {
                 forgottenFavorites.value = database.forgottenFavorites().first()

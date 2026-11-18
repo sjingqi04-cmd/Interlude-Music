@@ -35,7 +35,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = 17
-        versionName = "1.7.0"
+        versionName = "1.5.3"
         val baseVersionName = requireNotNull(versionName)
         buildConfigField("String", "BASE_VERSION_NAME", "\"$baseVersionName\"")
         resValue("string", "app_name", appNameOverride ?: "Interlude Music")
@@ -96,14 +96,10 @@ android {
             keyPassword = debugKeyPassword
         }
         create("release") {
-            val rootKeystore = rootProject.file("interlude.keystore")
-            val releaseKeystore = if (rootKeystore.exists()) rootKeystore else file("keystore/release.keystore")
-            if (releaseKeystore.exists()) {
-                storeFile = releaseKeystore
-                storePassword = localProperties.getProperty("STORE_PASSWORD") ?: System.getenv("STORE_PASSWORD")
-                keyAlias = localProperties.getProperty("KEY_ALIAS") ?: System.getenv("KEY_ALIAS")
-                keyPassword = localProperties.getProperty("KEY_PASSWORD") ?: System.getenv("KEY_PASSWORD")
-            }
+            storeFile = file("keystore/release.keystore")
+            storePassword = System.getenv("STORE_PASSWORD")
+            keyAlias = System.getenv("KEY_ALIAS")
+            keyPassword = System.getenv("KEY_PASSWORD")
         }
         getByName("debug") {
             keyAlias = "androiddebugkey"
@@ -115,10 +111,6 @@ android {
 
     buildTypes {
         release {
-            val releaseSigning = signingConfigs.getByName("release")
-            if (releaseSigning.storeFile != null) {
-                signingConfig = releaseSigning
-            }
             isMinifyEnabled = true
             isShrinkResources = true
             isCrunchPngs = false
@@ -132,7 +124,18 @@ android {
             if (applicationIdOverride == null) {
                 applicationIdSuffix = ".debug"
             }
-            isDebuggable = true
+            // Official builds are R8-optimized and non-debuggable, which is why their
+            // animations are smooth while a plain debug build stutters on ART's
+            // conservative JIT path. Mirror that here; the application id, signing
+            // config and version code stay unchanged so this still installs over
+            // previous custom builds without losing login or data.
+            isDebuggable = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
             if (appNameOverride == null) {
                 resValue("string", "app_name", "Interlude Music Debug")
             }

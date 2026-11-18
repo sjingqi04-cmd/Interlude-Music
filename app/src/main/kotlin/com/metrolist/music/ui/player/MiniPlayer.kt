@@ -9,6 +9,7 @@ package com.metrolist.music.ui.player
 
 import com.metrolist.music.ui.theme.LocalFrostedUi
 import com.metrolist.music.ui.theme.glass
+import android.content.Intent
 import android.content.res.Configuration
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
@@ -74,7 +75,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalWindowInfo
-import com.metrolist.music.ui.icons.painterResource
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -112,8 +113,6 @@ import com.metrolist.music.ui.component.Icon as MIcon
 import androidx.compose.ui.draw.blur
 import com.metrolist.music.constants.MiniPlayerBackgroundStyle
 import com.metrolist.music.constants.MiniPlayerBackgroundStyleKey
-import com.metrolist.music.constants.DefaultMiniPlayerCornerRadius
-import com.metrolist.music.constants.MiniPlayerCornerRadiusKey
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
@@ -174,13 +173,8 @@ private fun NewMiniPlayer(
     // Theme settings - these rarely change
     val miniPlayerBackground by rememberEnumPreference(
         MiniPlayerBackgroundStyleKey,
-        defaultValue = MiniPlayerBackgroundStyle.FROSTED_GLASS,
+        defaultValue = MiniPlayerBackgroundStyle.BLUR,
     )
-    val miniPlayerCornerRadius by rememberPreference(
-        MiniPlayerCornerRadiusKey,
-        defaultValue = DefaultMiniPlayerCornerRadius,
-    )
-    val miniPlayerShape = RoundedCornerShape(miniPlayerCornerRadius.dp)
     val context = LocalContext.current
     var gradientColors by remember { mutableStateOf<List<Color>>(emptyList()) }
     val gradientColorsCache = remember { mutableMapOf<String, List<Color>>() }
@@ -194,6 +188,8 @@ private fun NewMiniPlayer(
     // Player states - only collect what's needed at this level
     val playbackState by playerConnection.playbackState.collectAsState()
     val mediaMetadata by playerConnection.mediaMetadata.collectAsState()
+    val isPlaying by playerConnection.isPlaying.collectAsState()
+    val isMuted by playerConnection.isMuted.collectAsStateWithLifecycle()
     val canSkipNext by playerConnection.canSkipNext.collectAsStateWithLifecycle()
     val canSkipPrevious by playerConnection.canSkipPrevious.collectAsStateWithLifecycle()
 
@@ -297,10 +293,7 @@ private fun NewMiniPlayer(
         MiniPlayerBackgroundStyle.BLUR       -> MaterialTheme.colorScheme.surfaceContainer
         MiniPlayerBackgroundStyle.GRADIENT   -> MaterialTheme.colorScheme.surfaceContainer
         MiniPlayerBackgroundStyle.PURE_BLACK -> Color.Black
-        MiniPlayerBackgroundStyle.FROSTED_GLASS -> MaterialTheme.colorScheme.surfaceContainer
     }
-    val useGlass = miniPlayerBackground == MiniPlayerBackgroundStyle.FROSTED_GLASS ||
-        (LocalFrostedUi.current && miniPlayerBackground == MiniPlayerBackgroundStyle.DEFAULT)
     val forceLightColors = !useDarkTheme && (miniPlayerBackground == MiniPlayerBackgroundStyle.PURE_BLACK ||
             miniPlayerBackground == MiniPlayerBackgroundStyle.BLUR ||
             miniPlayerBackground == MiniPlayerBackgroundStyle.GRADIENT)
@@ -387,18 +380,18 @@ private fun NewMiniPlayer(
                     .then(if (isTabletLandscape) Modifier.width(500.dp).align(Alignment.Center) else Modifier.fillMaxWidth())
                     .height(64.dp)
                     .offset { IntOffset(offsetXAnimatable.value.roundToInt(), 0) }
-                    .clip(miniPlayerShape)
+                    .clip(RoundedCornerShape(32.dp))
                     .then(
-                        if (useGlass) {
-                            Modifier.glass(miniPlayerShape, tintAlpha = if (miniPlayerBackground == MiniPlayerBackgroundStyle.FROSTED_GLASS) 0.3f else 0.45f, bordered = false, chrome = true, force = true)
+                        if (LocalFrostedUi.current && miniPlayerBackground == MiniPlayerBackgroundStyle.DEFAULT) {
+                            Modifier.glass(RoundedCornerShape(32.dp), tintAlpha = 0.45f, bordered = false, chrome = true)
                         } else {
                             Modifier.background(color = backgroundColor)
                         },
                     )
                     .border(
                         1.dp,
-                        outlineColor.copy(alpha = if (useGlass && miniPlayerBackground != MiniPlayerBackgroundStyle.FROSTED_GLASS) 0.1f else 0.3f),
-                        miniPlayerShape,
+                        outlineColor.copy(alpha = if (LocalFrostedUi.current && miniPlayerBackground == MiniPlayerBackgroundStyle.DEFAULT) 0.1f else 0.3f),
+                        RoundedCornerShape(32.dp),
                     )
                     .clickable(
                         interactionSource = interactionSource,
@@ -483,20 +476,38 @@ private fun NewMiniPlayer(
                     Spacer(modifier = Modifier.width(12.dp))
                 }
 
-// Subscribe button - isolated composable
-                mediaMetadata?.artists?.firstOrNull()?.id?.let { artistId ->
-                    SubscribeButton(
-                        artistId = artistId,
-                        metadata = mediaMetadata!!,
-                        primaryColor = primaryColor,
+                // Transport controls - isolated composables. The play/pause button
+                // lives on the left with the progress ring, so this one shares the
+                // current song; prev/next are shown when there is room.
+                val showSkipButtons = configuration.screenWidthDp >= 380
+                MiniTransportShareButton(
+                    mediaId = mediaMetadata?.id,
+                    outlineColor = outlineColor,
+                    onSurfaceColor = onSurfaceColor,
+                )
+                if (showSkipButtons) {
+                    Spacer(modifier = Modifier.width(4.dp))
+                    MiniTransportSkipButton(
+                        icon = R.drawable.skip_previous,
+                        contentDescription = stringResource(R.string.previous),
                         outlineColor = outlineColor,
                         onSurfaceColor = onSurfaceColor,
+                        onClick = { playerConnection.seekToPrevious() },
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    MiniTransportSkipButton(
+                        icon = R.drawable.skip_next,
+                        contentDescription = stringResource(R.string.next),
+                        outlineColor = outlineColor,
+                        onSurfaceColor = onSurfaceColor,
+                        onClick = { playerConnection.seekToNext() },
+                        modifier = Modifier.smoothSkipOnHold(),
                     )
                 }
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-// Favorite button - isolated composable
+                // Favorite button - isolated composable
                 mediaMetadata?.let { FavoriteButton(
                     songId = it.id,
                     errorColor = errorColor,
@@ -1048,55 +1059,75 @@ private fun LegacyMiniMediaInfo(
 // ============================================================================
 
 @Composable
-private fun SubscribeButton(
-    artistId: String,
-    metadata: MediaMetadata,
-    primaryColor: Color,
+private fun MiniTransportShareButton(
+    mediaId: String?,
     outlineColor: Color,
     onSurfaceColor: Color,
 ) {
-    val database = LocalDatabase.current
-    val libraryArtist by database.artist(artistId).collectAsStateWithLifecycle(initialValue = null)
-    val isSubscribed = libraryArtist?.artist?.bookmarkedAt != null
+    val context = LocalContext.current
+    MiniTransportCircleButton(
+        outlineColor = outlineColor,
+        onSurfaceColor = onSurfaceColor,
+        contentDescription = stringResource(R.string.share),
+        icon = R.drawable.share,
+        onClick = {
+            val id = mediaId ?: return@MiniTransportCircleButton
+            val intent =
+                Intent().apply {
+                    action = Intent.ACTION_SEND
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, "https://music.youtube.com/watch?v=$id")
+                }
+            context.startActivity(Intent.createChooser(intent, null))
+        },
+    )
+}
 
+@Composable
+private fun MiniTransportSkipButton(
+    icon: Int,
+    contentDescription: String?,
+    outlineColor: Color,
+    onSurfaceColor: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    MiniTransportCircleButton(
+        outlineColor = outlineColor,
+        onSurfaceColor = onSurfaceColor,
+        contentDescription = contentDescription,
+        icon = icon,
+        onClick = onClick,
+        modifier = modifier,
+    )
+}
 
+@Composable
+private fun MiniTransportCircleButton(
+    outlineColor: Color,
+    onSurfaceColor: Color,
+    contentDescription: String?,
+    icon: Int,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Box(
         contentAlignment = Alignment.Center,
         modifier =
-            Modifier
+            modifier
                 .size(40.dp)
                 .clip(CircleShape)
                 .border(
                     width = 1.dp,
-                    color = if (isSubscribed) primaryColor.copy(alpha = 0.5f) else outlineColor.copy(alpha = 0.3f),
+                    color = outlineColor.copy(alpha = 0.3f),
                     shape = CircleShape,
-                ).background(
-                    color = if (isSubscribed) primaryColor.copy(alpha = 0.1f) else Color.Transparent,
-                    shape = CircleShape,
-                ).clickable {
-                    database.transaction {
-                        val artist = libraryArtist?.artist
-                        if (artist != null) {
-                            update(artist.toggleLike())
-                        } else {
-                            metadata.artists.firstOrNull()?.let { artistInfo ->
-                                insert(
-                                    ArtistEntity(
-                                        id = artistInfo.id ?: "",
-                                        name = artistInfo.name,
-                                        channelId = null,
-                                        thumbnailUrl = null,
-                                    ).toggleLike(),
-                                )
-                            }
-                        }
-                    }
-                },
+                ).background(Color.Transparent, CircleShape)
+                .clickable(onClick = onClick),
     ) {
         Icon(
-            painter = painterResource(R.drawable.how_to_reg_24),
-            contentDescription = null,
-            tint = if (isSubscribed) primaryColor else onSurfaceColor.copy(alpha = 0.7f),
+            painter = painterResource(icon),
+            contentDescription = contentDescription,
+            tint = onSurfaceColor.copy(alpha = 0.7f),
             modifier = Modifier.size(20.dp),
         )
     }

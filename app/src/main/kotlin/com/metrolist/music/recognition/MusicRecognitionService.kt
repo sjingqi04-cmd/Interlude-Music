@@ -13,11 +13,17 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
 import android.media.AudioFormat
+import android.media.AudioPlaybackCaptureConfiguration
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.projection.MediaProjection
+import android.os.Build
 import android.os.SystemClock
+import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
+import com.metrolist.music.R
 import com.metrolist.shazamkit.Shazam
 import com.metrolist.shazamkit.models.RecognitionResult
 import com.metrolist.shazamkit.models.RecognitionStatus
@@ -39,7 +45,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
-import kotlin.math.sqrt
 
 /**
  * Service for recognizing music using audio fingerprinting.
@@ -80,6 +85,14 @@ object MusicRecognitionService {
      */
     var resultSavedExternally: Boolean = false
 
+    /**
+     * True while the floating recognizer owns the session. The full screen must then leave the
+     * status alone: it is composed behind the overlay and would otherwise reset or auto-play a
+     * result the user has not acted on yet.
+     */
+    @Volatile
+    var overlayActive: Boolean = false
+
     @Volatile
     private var recordingStartElapsedMs: Long = 0L
 
@@ -118,23 +131,43 @@ object MusicRecognitionService {
     suspend fun recognize(
         context: Context,
         continuous: Boolean = false,
+        source: RecognitionSource = RecognitionSource.MICROPHONE,
+        projection: MediaProjection? = null,
     ): RecognitionStatus = withContext(Dispatchers.IO) {
         if (!hasRecordPermission(context)) {
             Timber.tag(TAG).w("Microphone permission not granted, aborting recognition")
             return@withContext RecognitionStatus.Error("Microphone permission not granted")
         }
+        if (source == RecognitionSource.PLAYBACK) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                return@withContext RecognitionStatus.Error(
+                    context.getString(R.string.recognition_error_playback_unsupported),
+                )
+            }
+            if (projection == null) {
+                return@withContext RecognitionStatus.Error(
+                    context.getString(R.string.recognition_error_no_projection),
+                )
+            }
+        }
 
         _recognitionStatus.value = RecognitionStatus.Listening
-        Timber.tag(TAG).d("Starting music recognition (continuous=%s)", continuous)
+        Timber.tag(TAG).d("Starting music recognition (continuous=%s, source=%s)", continuous, source)
 
         try {
             if (continuous) {
-                return@withContext recognizeContinuously()
+                return@withContext recognizeContinuously(context, source, projection)
             }
 
             // Step 1: Record audio
-            val audioData = recordAudio()
+            val audioData = recordAudio(source, projection)
             Timber.tag(TAG).d("Audio recorded: %d bytes", audioData.size)
+
+            if (source == RecognitionSource.PLAYBACK && isSilentPcm(audioData, audioData.size)) {
+                _recognitionStatus.value =
+                    RecognitionStatus.Error(context.getString(R.string.recognition_error_silent_capture))
+                return@withContext _recognitionStatus.value
+            }
 
             _recognitionStatus.value = RecognitionStatus.Processing
 
@@ -240,16 +273,14 @@ object MusicRecognitionService {
      * Each attempt remembers when its own window started so synced playback stays accurate.
      */
     @SuppressLint("MissingPermission")
-    private suspend fun recognizeContinuously(): RecognitionStatus = coroutineScope {
+    private suspend fun recognizeContinuously(
+        context: Context,
+        source: RecognitionSource,
+        projection: MediaProjection?,
+    ): RecognitionStatus = coroutineScope {
         val token = ++runToken
         val bufferSize = AudioRecord.getMinBufferSize(RECORDING_SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
-        val audioRecord = AudioRecord(
-            MediaRecorder.AudioSource.MIC,
-            RECORDING_SAMPLE_RATE,
-            CHANNEL_CONFIG,
-            AUDIO_FORMAT,
-            bufferSize,
-        )
+        val audioRecord = createAudioRecord(source, projection, bufferSize)
 
         val ring = ByteArray((CONTINUOUS_MAX_WINDOW_MS * BYTES_PER_MS).toInt() and 1.inv())
         var writePos = 0
@@ -264,6 +295,7 @@ object MusicRecognitionService {
 
         var recordStartElapsedMs = 0L
         var lastAttemptAtMs = 0L
+        var heardAudio = false
 
         try {
             audioRecord.startRecording()
@@ -277,7 +309,7 @@ object MusicRecognitionService {
             ) {
                 val bytesRead = audioRecord.read(readBuffer, 0, bufferSize)
                 if (bytesRead <= 0) continue
-                publishLevel(readBuffer, bytesRead)
+                if (publishLevel(readBuffer, bytesRead) >= SILENCE_RMS_THRESHOLD) heardAudio = true
 
                 var offset = 0
                 while (offset < bytesRead) {
@@ -356,6 +388,11 @@ object MusicRecognitionService {
                 _recognitionStatus.value = RecognitionStatus.Error(lastError.get()?.message ?: "Recognition failed")
                 _recognitionStatus.value
             }
+            source == RecognitionSource.PLAYBACK && !heardAudio -> {
+                _recognitionStatus.value =
+                    RecognitionStatus.Error(context.getString(R.string.recognition_error_silent_capture))
+                _recognitionStatus.value
+            }
             else -> {
                 _recognitionStatus.value =
                     RecognitionStatus.NoMatch("Couldn't find a match. Try getting closer to the music.")
@@ -367,22 +404,19 @@ object MusicRecognitionService {
     private fun publishLevel(
         buffer: ByteArray,
         bytesRead: Int,
-    ) {
-        val sampleCount = bytesRead / 2
-        if (sampleCount == 0) return
-        var sumSquares = 0.0
-        var i = 0
-        while (i + 1 < bytesRead) {
-            val sample = (buffer[i + 1].toInt() shl 8) or (buffer[i].toInt() and 0xFF)
-            sumSquares += sample.toDouble() * sample
-            i += 2
+    ): Double {
+        val rms = rmsLevel(buffer, bytesRead)
+        if (bytesRead / 2 > 0) {
+            _audioLevel.value = (rms * 8.0).coerceIn(0.0, 1.0).toFloat()
         }
-        val rms = sqrt(sumSquares / sampleCount) / 32768.0
-        _audioLevel.value = (rms * 8.0).coerceIn(0.0, 1.0).toFloat()
+        return rms
     }
 
     @SuppressLint("MissingPermission")
-    private suspend fun recordAudio(): ByteArray = withContext(Dispatchers.IO) {
+    private suspend fun recordAudio(
+        source: RecognitionSource,
+        projection: MediaProjection?,
+    ): ByteArray = withContext(Dispatchers.IO) {
         val bufferSize = AudioRecord.getMinBufferSize(
             RECORDING_SAMPLE_RATE,
             CHANNEL_CONFIG,
@@ -390,13 +424,7 @@ object MusicRecognitionService {
         )
         Timber.tag(TAG).d("Recording audio: sampleRate=%d, bufferSize=%d, durationMs=%d", RECORDING_SAMPLE_RATE, bufferSize, RECORDING_DURATION_MS)
 
-        val audioRecord = AudioRecord(
-            MediaRecorder.AudioSource.MIC,
-            RECORDING_SAMPLE_RATE,
-            CHANNEL_CONFIG,
-            AUDIO_FORMAT,
-            bufferSize
-        )
+        val audioRecord = createAudioRecord(source, projection, bufferSize)
 
         val outputStream = ByteArrayOutputStream()
         val buffer = ByteArray(bufferSize)
@@ -423,6 +451,53 @@ object MusicRecognitionService {
         val totalBytes = outputStream.size()
         Timber.tag(TAG).d("Audio recording complete: %d bytes collected", totalBytes)
         outputStream.toByteArray()
+    }
+
+    // recognize() rejects PLAYBACK below Q and without a projection before reaching here.
+    @SuppressLint("NewApi")
+    private fun createAudioRecord(
+        source: RecognitionSource,
+        projection: MediaProjection?,
+        bufferSize: Int,
+    ): AudioRecord =
+        when (source) {
+            RecognitionSource.MICROPHONE -> AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                RECORDING_SAMPLE_RATE,
+                CHANNEL_CONFIG,
+                AUDIO_FORMAT,
+                bufferSize,
+            )
+
+            RecognitionSource.PLAYBACK -> createPlaybackCaptureRecord(
+                requireNotNull(projection),
+                bufferSize,
+            )
+        }
+
+    @RequiresApi(Build.VERSION_CODES.Q)
+    private fun createPlaybackCaptureRecord(
+        projection: MediaProjection,
+        bufferSize: Int,
+    ): AudioRecord {
+        val config =
+            AudioPlaybackCaptureConfiguration
+                .Builder(projection)
+                .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+                .addMatchingUsage(AudioAttributes.USAGE_GAME)
+                .build()
+        return AudioRecord
+            .Builder()
+            .setAudioFormat(
+                AudioFormat
+                    .Builder()
+                    .setEncoding(AUDIO_FORMAT)
+                    .setSampleRate(RECORDING_SAMPLE_RATE)
+                    .setChannelMask(CHANNEL_CONFIG)
+                    .build(),
+            ).setBufferSizeInBytes(bufferSize)
+            .setAudioPlaybackCaptureConfig(config)
+            .build()
     }
 
     fun reset() {

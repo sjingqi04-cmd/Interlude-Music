@@ -91,7 +91,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
-import com.metrolist.music.ui.icons.painterResource
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
@@ -139,6 +139,7 @@ import com.metrolist.music.ui.component.DefaultDialog
 import com.metrolist.music.ui.component.DraggableScrollbar
 import com.metrolist.music.ui.component.EmptyPlaceholder
 import com.metrolist.music.ui.component.ExpandableText
+import com.metrolist.music.ui.component.HideOnScrollFAB
 import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.component.LocalMenuState
 import com.metrolist.music.ui.component.OverlayEditButton
@@ -224,6 +225,15 @@ fun LocalPlaylistScreen(
                 }
             }
         }
+
+    val displayedSongs = if (isSearching) filteredSongs else mutableSongs
+
+    val locateVisible by remember(displayedSongs, mediaMetadata?.id) {
+        derivedStateOf {
+            val id = mediaMetadata?.id
+            id != null && displayedSongs.any { it.song.id == id }
+        }
+    }
 
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(isSearching) {
@@ -568,8 +578,6 @@ fun LocalPlaylistScreen(
                 }
             }
 
-            val displayedSongs = if (isSearching) filteredSongs else mutableSongs
-
             itemsIndexed(
                 items = displayedSongs,
                 key = { _, song -> song.map.id },
@@ -752,6 +760,25 @@ fun LocalPlaylistScreen(
                     ).align(Alignment.CenterEnd),
             scrollState = lazyListState,
             headerItems = 2,
+        )
+
+        HideOnScrollFAB(
+            lazyListState = lazyListState,
+            locateOnly = true,
+            locateVisible = locateVisible,
+            onLocateClick = {
+                val id = mediaMetadata?.id ?: return@HideOnScrollFAB
+                val index = displayedSongs.indexOfFirst { it.song.id == id }
+                if (index >= 0) {
+                    coroutineScope.launch {
+                        lazyListState.animateScrollToItem((if (isSearching) 1 else 2) + index)
+                    }
+                } else {
+                    coroutineScope.launch {
+                        snackbarHostState.showSnackbar(context.getString(R.string.playing_song_not_in_playlist))
+                    }
+                }
+            },
         )
 
         GlassTopAppBar(
@@ -953,7 +980,7 @@ fun LocalPlaylistHeader(
             ActivityResultContracts.PickVisualMedia(),
         ) { uri ->
             uri?.let { sourceUri ->
-                val destFile = java.io.File(java.io.File(context.cacheDir, "shared").apply { mkdirs() }, "playlist_cover_crop_${System.currentTimeMillis()}.jpg")
+                val destFile = java.io.File(context.cacheDir, "playlist_cover_crop_${System.currentTimeMillis()}.jpg")
                 val destUri = FileProvider.getUriForFile(context, "${context.packageName}.FileProvider", destFile)
                 pendingCropDestUri = destUri
 

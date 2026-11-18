@@ -1372,27 +1372,34 @@ object LyricsUtils {
         sb.toString()
     }
 
-    suspend fun romanize(
-        text: String,
-        line: String,
-        enabledLanguages: List<String>,
-        romanizeCyrillicByLine: Boolean
-    ): String? {
-        val detectionText = if (romanizeCyrillicByLine) line else text
-        return when {
-            "Japanese" in enabledLanguages && isJapanese(detectionText) && !isChinese(detectionText) -> romanizeJapanese(line)
-            "Korean" in enabledLanguages && isKorean(detectionText) -> romanizeKorean(line)
-            "Chinese" in enabledLanguages && isChinese(detectionText) -> romanizeChinese(line)
-            "Hindi" in enabledLanguages && isHindi(detectionText) -> romanizeHindi(line)
-            "Ukrainian" in enabledLanguages && isUkrainian(detectionText) -> romanizeCyrillic(line, "Ukrainian")
-            "Russian" in enabledLanguages && isRussian(detectionText) -> romanizeCyrillic(line, "Russian")
-            "Serbian" in enabledLanguages && isSerbian(detectionText) -> romanizeCyrillic(line, "Serbian")
-            "Bulgarian" in enabledLanguages && isBulgarian(detectionText) -> romanizeCyrillic(line, "Bulgarian")
-            "Belarusian" in enabledLanguages && isBelarusian(detectionText) -> romanizeCyrillic(line, "Belarusian")
-            "Kyrgyz" in enabledLanguages && isKyrgyz(detectionText) -> romanizeCyrillic(line, "Kyrgyz")
-            "Macedonian" in enabledLanguages && isMacedonian(detectionText) -> romanizeCyrillic(line, "Macedonian")
-            else -> null
-        }
+    /**
+     * Resolves which romanization applies to [text]. The detection text is the whole song
+     * unless the user asked for per-line Cyrillic detection, so callers should resolve this
+     * once per song rather than per line — the predicates scan the full text.
+     */
+    fun detectLanguage(text: String, enabledLanguages: List<String>): String? = when {
+        "Japanese" in enabledLanguages && isJapanese(text) && !isChinese(text) -> "Japanese"
+        "Korean" in enabledLanguages && isKorean(text) -> "Korean"
+        "Chinese" in enabledLanguages && isChinese(text) -> "Chinese"
+        "Hindi" in enabledLanguages && isHindi(text) -> "Hindi"
+        "Ukrainian" in enabledLanguages && isUkrainian(text) -> "Ukrainian"
+        "Russian" in enabledLanguages && isRussian(text) -> "Russian"
+        "Serbian" in enabledLanguages && isSerbian(text) -> "Serbian"
+        "Bulgarian" in enabledLanguages && isBulgarian(text) -> "Bulgarian"
+        "Belarusian" in enabledLanguages && isBelarusian(text) -> "Belarusian"
+        "Kyrgyz" in enabledLanguages && isKyrgyz(text) -> "Kyrgyz"
+        "Macedonian" in enabledLanguages && isMacedonian(text) -> "Macedonian"
+        else -> null
+    }
+
+    suspend fun romanizeLine(line: String, language: String?): String? = when (language) {
+        "Japanese" -> romanizeJapanese(line)
+        "Korean" -> romanizeKorean(line)
+        "Chinese" -> romanizeChinese(line)
+        "Hindi" -> romanizeHindi(line)
+        "Ukrainian", "Russian", "Serbian", "Bulgarian",
+        "Belarusian", "Kyrgyz", "Macedonian" -> romanizeCyrillic(line, language)
+        else -> null
     }
 
     private fun isCyrillicVowel(char: Char): Boolean {

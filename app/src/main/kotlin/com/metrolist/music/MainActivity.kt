@@ -13,8 +13,6 @@ import com.metrolist.music.constants.DefaultFrostedGlassBlurLevel
 import com.metrolist.music.constants.DefaultFrostedGlassUi
 import com.metrolist.music.constants.FrostedGlassBlurLevelKey
 import com.metrolist.music.constants.FrostedGlassUiKey
-import com.metrolist.music.constants.SoftIconsKey
-import com.metrolist.music.ui.icons.LocalSoftIcons
 import com.metrolist.music.ui.theme.LocalGlassChromeHaze
 import com.metrolist.music.ui.theme.fadingGlass
 import android.Manifest
@@ -24,7 +22,6 @@ import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Intent
 import android.content.ServiceConnection
-import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -35,8 +32,10 @@ import android.widget.Toast
 import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -112,7 +111,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalWindowInfo
-import com.metrolist.music.ui.icons.painterResource
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
@@ -164,12 +163,10 @@ import com.metrolist.music.constants.DismissedStandaloneUpdateKey
 import com.metrolist.music.constants.DensityScaleKey
 import com.metrolist.music.constants.DisableScreenshotKey
 import com.metrolist.music.constants.DynamicThemeKey
-import com.metrolist.music.constants.ForceDynamicColorKey
 import com.metrolist.music.constants.EnableHighRefreshRateKey
 import com.metrolist.music.constants.EnableLandscapeScalingKey
 import com.metrolist.music.constants.ExperimentalLyricsKey
 import com.metrolist.music.constants.ForceBottomNavBarKey
-import com.metrolist.music.constants.ForcePortraitUiKey
 import com.metrolist.music.constants.LastSeenVersionKey
 import com.metrolist.music.constants.ListenTogetherInTopBarKey
 import com.metrolist.music.constants.ListenTogetherUsernameKey
@@ -229,7 +226,6 @@ import com.metrolist.music.utils.ReleaseInfo
 import com.metrolist.music.utils.SearchRoutes
 import com.metrolist.music.utils.SyncUtils
 import com.metrolist.music.utils.ArtistNameAliases
-import com.metrolist.music.ui.component.UpdateInstallHost
 import com.metrolist.music.utils.UpdateInstaller
 import com.metrolist.music.utils.Updater
 import com.metrolist.music.utils.dataStore
@@ -505,6 +501,13 @@ class MainActivity : FragmentActivity() {
                     settings[com.metrolist.music.constants.AiProviderKey] = "Free"
                 }
             }
+
+            // Lyrics translation should produce Chinese by default; migrate the old English default.
+            if (preferences[com.metrolist.music.constants.TranslateLanguageKey] == "en") {
+                safeDataStoreEdit { settings ->
+                    settings[com.metrolist.music.constants.TranslateLanguageKey] = "zh-CN"
+                }
+            }
         }
 
         lifecycleScope.launch(Dispatchers.IO) {
@@ -545,7 +548,9 @@ class MainActivity : FragmentActivity() {
                     val preferences = dataStore.data.first()
                     val notificationsEnabled = preferences[UpdateNotificationsEnabledKey] ?: true
                     val (releaseInfo, hasUpdate) = Updater.checkForUpdate().getOrNull() ?: (null to false)
-                    releaseInfo?.let { onLatestVersionNameChange(it.versionName) }
+                    // Only reflect an upstream version when there is an actual update, so the
+                    // custom build never keeps a stale "new version" badge when there is none.
+                    if (hasUpdate) releaseInfo?.let { onLatestVersionNameChange(it.versionName) }
 
                     val standaloneUpdate =
                         releaseInfo
@@ -618,7 +623,6 @@ class MainActivity : FragmentActivity() {
         }
 
         val enableDynamicTheme by rememberPreference(DynamicThemeKey, defaultValue = true)
-        val forceDynamicColor by rememberPreference(ForceDynamicColorKey, defaultValue = false)
         val enableHighRefreshRate by rememberPreference(EnableHighRefreshRateKey, defaultValue = true)
 
         LaunchedEffect(enableHighRefreshRate) {
@@ -668,7 +672,6 @@ class MainActivity : FragmentActivity() {
                 pureBlackEnabled && useDarkTheme
             }
         val frostedUi by rememberPreference(FrostedGlassUiKey, defaultValue = DefaultFrostedGlassUi)
-        val softIcons by rememberPreference(SoftIconsKey, defaultValue = true)
         val frostedBlurLevel by rememberPreference(FrostedGlassBlurLevelKey, defaultValue = DefaultFrostedGlassBlurLevel)
 
         val (selectedThemeColorInt) = rememberPreference(SelectedThemeColorKey, defaultValue = DefaultThemeColor.toArgb())
@@ -734,18 +737,11 @@ class MainActivity : FragmentActivity() {
                 }
         }
 
-        val animatedThemeColor by animateColorAsState(
-            targetValue = themeColor,
-            animationSpec = tween(durationMillis = 700),
-            label = "themeColor",
-        )
-
         MetrolistTheme(
             darkTheme = useDarkTheme,
             pureBlack = pureBlack,
-            themeColor = animatedThemeColor,
+            themeColor = themeColor,
             frostedUi = frostedUi,
-            forceColor = enableDynamicTheme && forceDynamicColor,
         ) {
             val currentDensity = LocalDensity.current
             val windowInfo = LocalWindowInfo.current
@@ -773,10 +769,27 @@ class MainActivity : FragmentActivity() {
             }
 
             CompositionLocalProvider(LocalDensity provides scaledDensity) {
+            // One-shot entrance animation. The window background already matches the
+            // app surface, so a short fade plus a hair of scale-up removes the hard
+            // "snap" on cold start without delaying perceived readiness.
+            val enterVisible = remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) { enterVisible.value = true }
+            val enterProgress by animateFloatAsState(
+                targetValue = if (enterVisible.value) 1f else 0f,
+                animationSpec = tween(durationMillis = 260),
+                label = "appEnterProgress",
+            )
+
             BoxWithConstraints(
                 modifier =
                     Modifier
                         .fillMaxSize()
+                        .graphicsLayer {
+                            alpha = enterProgress
+                            val scale = 0.985f + 0.015f * enterProgress
+                            scaleX = scale
+                            scaleY = scale
+                        }
                         .background(if (pureBlack) Color.Black else MaterialTheme.colorScheme.surface),
             ) {
                 val density = LocalDensity.current
@@ -814,15 +827,6 @@ class MainActivity : FragmentActivity() {
                     navigationItems.mapIndexed { i, s -> s.route to i }.toMap()
                 }
                 val (forceBottomNav) = rememberPreference(ForceBottomNavBarKey, defaultValue = false)
-                val (forcePortraitUi) = rememberPreference(ForcePortraitUiKey, defaultValue = false)
-                LaunchedEffect(forcePortraitUi) {
-                    requestedOrientation =
-                        if (forcePortraitUi) {
-                            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                        } else {
-                            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                        }
-                }
                 val (slimNav) = rememberPreference(SlimNavBarKey, defaultValue = false)
                 val (defaultOpenTabInt) = rememberPreference(DefaultOpenTabKey, defaultValue = NavigationTab.HOME.name)
                 val defaultOpenTab = remember(defaultOpenTabInt) {
@@ -952,18 +956,34 @@ class MainActivity : FragmentActivity() {
                     }
                 appBarScrollBehavior(
                     canScroll = {
-                        !inSearchScreen &&
-                            (playerBottomSheetState.isCollapsed || playerBottomSheetState.isDismissed)
+                        playerBottomSheetState.isCollapsed || playerBottomSheetState.isDismissed
                     },
                 )
 
                 val topAppBarScrollBehavior =
                     appBarScrollBehavior(
                         canScroll = {
-                            !inSearchScreen &&
-                                (playerBottomSheetState.isCollapsed || playerBottomSheetState.isDismissed)
+                            playerBottomSheetState.isCollapsed || playerBottomSheetState.isDismissed
                         },
                     )
+
+                // A single bouncy progress drives both the nav bar sliding away and the mini
+                // player settling to the very bottom, so they move together without a gap.
+                val navBarHideTarget by remember {
+                    derivedStateOf {
+                        val state = topAppBarScrollBehavior.state
+                        val limit = state.heightOffsetLimit
+                        limit < 0f && state.heightOffset <= limit * 0.5f
+                    }
+                }
+                val hideProgress by animateFloatAsState(
+                    targetValue = if (navBarHideTarget) 1f else 0f,
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessMediumLow,
+                    ),
+                    label = "navBarHideProgress",
+                )
 
                 // Navigation tracking
                 LaunchedEffect(navBackStackEntry) {
@@ -1112,7 +1132,6 @@ class MainActivity : FragmentActivity() {
 
                 CompositionLocalProvider(
                     LocalFrostedUi provides frostedUi,
-                    LocalSoftIcons provides softIcons,
                     LocalGlassBlur provides frostedBlurLevel.dp,
                     LocalGlassHaze provides menuHazeState,
                     LocalGlassChromeHaze provides contentHazeState,
@@ -1323,6 +1342,17 @@ class MainActivity : FragmentActivity() {
                                             state = playerBottomSheetState,
                                             navController = navController,
                                             pureBlack = pureBlack,
+                                            modifier = Modifier.graphicsLayer {
+                                                // As the nav bar springs away, let the mini player settle
+                                                // down into the freed space so no gap is left below it.
+                                                // Only while collapsed; the expanded player fills the screen.
+                                                translationY =
+                                                    if (playerBottomSheetState.isCollapsed) {
+                                                        navPadding.toPx() * hideProgress
+                                                    } else {
+                                                        0f
+                                                    }
+                                            },
                                         )
                                     }
 
@@ -1344,6 +1374,10 @@ class MainActivity : FragmentActivity() {
                                                     val navBarHeightPx = navigationBarHeight.toPx()
                                                     val totalHeightPx = navBarTotalHeight.toPx()
 
+                                                    // Bouncy spring progress shared with the mini player below.
+                                                    val scrollHideFraction = hideProgress
+                                                    val scrollHideOffset = totalHeightPx * scrollHideFraction
+
                                                     translationY =
                                                         if (navBarHeightPx == 0f) {
                                                             totalHeightPx
@@ -1353,19 +1387,19 @@ class MainActivity : FragmentActivity() {
                                                             val slideOffset = totalHeightPx * progress
                                                             val hideOffset =
                                                                 totalHeightPx * (1 - navBarHeightPx / NavigationBarHeight.toPx())
-                                                            slideOffset + hideOffset
+                                                            slideOffset + hideOffset + scrollHideOffset
                                                         }
 
                                                     // The glass fade reaches above the bar, so hide the whole
                                                     // bar while it is slid away or the player is open.
                                                     alpha =
                                                         if (!frostedUi) {
-                                                            1f
+                                                            (1f - scrollHideFraction)
                                                         } else if (navBarHeightPx == 0f) {
                                                             0f
                                                         } else {
                                                             val shown = (navBarHeightPx / NavigationBarHeight.toPx()).coerceIn(0f, 1f)
-                                                            shown * (1f - playerBottomSheetState.progress.coerceIn(0f, 1f))
+                                                            shown * (1f - playerBottomSheetState.progress.coerceIn(0f, 1f)) * (1f - scrollHideFraction)
                                                         }
                                                 },
                                     )
@@ -1589,10 +1623,6 @@ class MainActivity : FragmentActivity() {
                                 }
                             }
                         }
-                    }
-
-                    if (BuildConfig.UPDATER_AVAILABLE) {
-                        UpdateInstallHost()
                     }
 
                     if (!showChangelog.value) {

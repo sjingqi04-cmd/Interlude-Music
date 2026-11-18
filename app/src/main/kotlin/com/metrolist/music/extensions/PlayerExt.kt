@@ -33,6 +33,24 @@ fun Player.toggleRepeatMode() {
         }
 }
 
+/** Play in order -> repeat queue -> repeat current song -> shuffle -> play in order. */
+fun nextPlaybackMode(
+    repeatMode: Int,
+    shuffleEnabled: Boolean,
+): Pair<Int, Boolean> =
+    when {
+        shuffleEnabled -> REPEAT_MODE_OFF to false
+        repeatMode == REPEAT_MODE_OFF -> REPEAT_MODE_ALL to false
+        repeatMode == REPEAT_MODE_ALL -> REPEAT_MODE_ONE to false
+        else -> REPEAT_MODE_OFF to true
+    }
+
+fun Player.cyclePlaybackMode() {
+    val (mode, shuffle) = nextPlaybackMode(repeatMode, shuffleModeEnabled)
+    repeatMode = mode
+    shuffleModeEnabled = shuffle
+}
+
 fun Player.getQueueWindows(): List<Timeline.Window> {
     val timeline = currentTimeline
     if (timeline.isEmpty) {

@@ -148,8 +148,7 @@ import com.metrolist.music.constants.LastFMUseNowPlaying
 import com.metrolist.music.constants.MediaSessionConstants
 import com.metrolist.music.constants.MediaSessionConstants.CommandAddToTargetPlaylist
 import com.metrolist.music.constants.MediaSessionConstants.CommandToggleLike
-import com.metrolist.music.constants.MediaSessionConstants.CommandToggleRepeatMode
-import com.metrolist.music.constants.MediaSessionConstants.CommandToggleShuffle
+import com.metrolist.music.constants.MediaSessionConstants.CommandTogglePlaybackMode
 import com.metrolist.music.constants.MediaSessionConstants.CommandToggleStartRadio
 import com.metrolist.music.constants.PauseListenHistoryKey
 import com.metrolist.music.constants.PauseOnMute
@@ -223,6 +222,7 @@ import com.metrolist.music.utils.NetworkConnectivityObserver
 import com.metrolist.music.utils.NotInterested
 import com.metrolist.music.utils.ScrobbleManager
 import com.metrolist.music.utils.SyncUtils
+import com.metrolist.music.utils.TasteProfile
 import com.metrolist.music.utils.getArtistSeparator
 import com.metrolist.music.utils.joinToArtistString
 import com.metrolist.music.utils.InnerTubeXPlayer
@@ -924,9 +924,10 @@ class MusicService :
         ) { mediaMetadata, showLyrics ->
             mediaMetadata to showLyrics
         }.collectLatest(scope) { (mediaMetadata, showLyrics) ->
-            if (showLyrics && mediaMetadata != null && database
-                    .lyrics(mediaMetadata.id)
-                    .first() == null
+            if (showLyrics && mediaMetadata != null && lyricsHelper.needsFetch(
+                    database.lyrics(mediaMetadata.id).first(),
+                    mediaMetadata.id,
+                )
             ) {
                 val lyricsWithProvider = lyricsHelper.getLyrics(mediaMetadata)
                 database.query {
@@ -1443,12 +1444,13 @@ class MusicService :
                 )
                 .setRenderersFactory(createRenderersFactory(normalizationProcessor, eqProcessor, bassProcessor, silenceProcessor, vocalProcessor, mixFxProcessor, useAudioTrackPlaybackParams))
                 .setLoadControl(
-                    // Start playback once ~750ms is buffered (media3's default is 1000ms) so first
-                    // audio is audible a touch sooner. min/max/after-rebuffer match the media3 1.x
-                    // defaults (50s / 50s / 2000ms) so buffering and post-stall recovery are unchanged.
+                    // Start playback once ~750ms is buffered (media3's default is 1000ms) so
+                    // first audio is audible a touch sooner. A larger max buffer lets the
+                    // next track keep buffering in the background while the current one
+                    // plays, which removes most of the silence when auto-advancing.
                     DefaultLoadControl
                         .Builder()
-                        .setBufferDurationsMs(50_000, 50_000, 750, 2_000)
+                        .setBufferDurationsMs(50_000, 120_000, 750, 2_000)
                         .build(),
                 )
                 .setHandleAudioBecomingNoisy(true)
@@ -1694,6 +1696,24 @@ class MusicService :
             return
         }
 
+        // Still give the queue one more chance before parking: a burst of failures
+        // while auto-advancing is often a transient stream-resolution hiccup rather
+        // than a genuinely dead queue, and stopping outright is what users notice as
+        // "playback randomly stopped".
+        if (nextWindowIndex != C.INDEX_UNSET) {
+            scope.launch {
+                delay(RETRY_DELAY_MS * 2)
+                if (!playerInitialized.value || player.playbackState == Player.STATE_READY) return@launch
+                consecutivePlaybackErr = 0
+                player.seekTo(nextWindowIndex, C.TIME_UNSET)
+                player.prepare()
+                if (castConnectionHandler?.isCasting?.value != true) {
+                    player.play()
+                }
+            }
+            return
+        }
+
         player.pause()
         consecutivePlaybackErr = 0
     }
@@ -1703,8 +1723,29 @@ class MusicService :
     }
 
     private fun updateNotification(isLiked: Boolean? = currentSong.value?.song?.let { if (it.isEpisode) it.inLibrary != null else it.liked }) {
-        mediaSession?.setCustomLayout(
+        val (modeName, modeIcon) =
+            if (player.shuffleModeEnabled) {
+                R.string.action_shuffle_on to R.drawable.shuffle_on
+            } else {
+                when (player.repeatMode) {
+                    REPEAT_MODE_OFF -> R.string.repeat_mode_off to R.drawable.repeat
+                    REPEAT_MODE_ALL -> R.string.repeat_mode_all to R.drawable.repeat_on
+                    REPEAT_MODE_ONE -> R.string.repeat_mode_one to R.drawable.repeat_one_on
+                    else -> throw IllegalStateException()
+                }
+            }
+
+        // Only SLOT_BACK and SLOT_FORWARD reach the collapsed media controls, and claiming them
+        // displaces previous/next, so shuffle and repeat share one four-state button.
+        mediaSession?.setMediaButtonPreferences(
             listOf(
+                CommandButton
+                    .Builder()
+                    .setDisplayName(getString(modeName))
+                    .setIconResId(modeIcon)
+                    .setSessionCommand(CommandTogglePlaybackMode)
+                    .setSlots(CommandButton.SLOT_BACK)
+                    .build(),
                 CommandButton
                     .Builder()
                     .setDisplayName(
@@ -1717,39 +1758,15 @@ class MusicService :
                         ),
                     ).setIconResId(if (isLiked == true) R.drawable.ic_heart else R.drawable.ic_heart_outline)
                     .setSessionCommand(CommandToggleLike)
+                    .setSlots(CommandButton.SLOT_FORWARD)
                     .setEnabled(currentSong.value != null)
-                    .build(),
-                CommandButton
-                    .Builder()
-                    .setDisplayName(
-                        getString(
-                            when (player.repeatMode) {
-                                REPEAT_MODE_OFF -> R.string.repeat_mode_off
-                                REPEAT_MODE_ONE -> R.string.repeat_mode_one
-                                REPEAT_MODE_ALL -> R.string.repeat_mode_all
-                                else -> throw IllegalStateException()
-                            },
-                        ),
-                    ).setIconResId(
-                        when (player.repeatMode) {
-                            REPEAT_MODE_OFF -> R.drawable.repeat
-                            REPEAT_MODE_ONE -> R.drawable.repeat_one_on
-                            REPEAT_MODE_ALL -> R.drawable.repeat_on
-                            else -> throw IllegalStateException()
-                        },
-                    ).setSessionCommand(CommandToggleRepeatMode)
-                    .build(),
-                CommandButton
-                    .Builder()
-                    .setDisplayName(getString(if (player.shuffleModeEnabled) R.string.action_shuffle_off else R.string.action_shuffle_on))
-                    .setIconResId(if (player.shuffleModeEnabled) R.drawable.shuffle_on else R.drawable.shuffle)
-                    .setSessionCommand(CommandToggleShuffle)
                     .build(),
                 CommandButton
                     .Builder()
                     .setDisplayName(getString(R.string.start_radio))
                     .setIconResId(R.drawable.radio)
                     .setSessionCommand(CommandToggleStartRadio)
+                    .setSlots(CommandButton.SLOT_OVERFLOW)
                     .setEnabled(currentSong.value != null)
                     .build(),
                 CommandButton
@@ -1757,6 +1774,7 @@ class MusicService :
                     .setDisplayName(getString(R.string.android_auto_target_playlist))
                     .setIconResId(R.drawable.playlist_add)
                     .setSessionCommand(CommandAddToTargetPlaylist)
+                    .setSlots(CommandButton.SLOT_OVERFLOW)
                     .setEnabled(currentSong.value != null)
                     .build(),
             ),
@@ -1894,12 +1912,16 @@ class MusicService :
     ): List<MediaItem> =
         withContext(Dispatchers.IO) {
             val blocked = NotInterested.current(this@MusicService)
-            // Keep YouTube's similarity order so the queue stays close to the mood of the played song.
-            items.take(keep) +
+            val scores = TasteProfile.artistScores(database, blocked.artists)
+            val tail =
                 items.drop(keep).filterNot { item ->
                     item.metadata?.let { m ->
                         m.id in blocked.songs || m.artists.any { it.id != null && it.id in blocked.artists }
                     } == true
+                }
+            items.take(keep) +
+                TasteProfile.weightedOrder(tail) { item ->
+                    1.0 + (item.metadata?.artists?.maxOfOrNull { a -> a.id?.let { scores[it] } ?: 0.0 } ?: 0.0)
                 }
         }
 

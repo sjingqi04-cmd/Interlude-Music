@@ -50,18 +50,18 @@ Interlude is a fork of [Metrolist](https://github.com/MetrolistGroup/Metrolist).
   </tr>
   <tr>
     <td align="center">
+      <img src="assets/screenshots/player-pill.jpeg" height="450" alt="Player">
+    </td>
+    <td align="center">
       <img src="assets/screenshots/search-screen.jpeg" height="450" alt="Search">
     </td>
     <td align="center">
       <img src="assets/screenshots/stats.jpeg" height="450" alt="Statistics">
     </td>
-    <td align="center">
-      <img src="assets/screenshots/spotify-canvas.gif" height="450" alt="Spotify Canvas">
-    </td>
   </tr>
 </table>
 
-<i>Experience Interlude — designed with Material 3 Expressive, now with looping Spotify Canvas video in the player.</i>
+<i>Experience Interlude — designed with Material 3 Expressive.</i>
 
 </div>
 
@@ -71,9 +71,9 @@ Interlude is a fork of [Metrolist](https://github.com/MetrolistGroup/Metrolist).
 
 ### Playback
 
-* **Smooth Skip** analyzes the BPM of the ending and upcoming songs on your device, gradually matching their tempos before the mix. The next song begins after any silent intro, with the transition timed around fade-outs.
+* **Seamless transition (beta):** analyzes the BPM of the ending and upcoming songs on your device, gradually matching their tempos before the mix. The next song begins after any silent intro, with the transition timed around fade-outs.
 * Listening cache and downloads.
-* Spotify Canvas
+* Built-in equalizer.
 * Sleep timer.
   
 
@@ -86,11 +86,10 @@ Interlude is a fork of [Metrolist](https://github.com/MetrolistGroup/Metrolist).
 
 ### Look and Feel
 
-* **Spotify Canvas:** looping Canvas videos play full-screen behind the player in the Full Art and Immersive styles. The next song's Canvas is prefetched and cached on disk. Canvas requires a connected Spotify account. Animated artwork from Apple Music is supported too.
 * **Material 3 Expressive** design with wavy progress components.
 * **Frosted Glass UI**
-* Three player styles: **Default**,**Full Art**. and **Immersive**
-* **Player button shapes:** Round, Pill, or Soft.
+* Three player styles: **Default**,**Full Art**. and Immersive
+* **Player button shapes:** Round, Pill, or Apple Music style.
 * Custom player button colours.
 * Customizable backgrounds for the player, mini player, and menus:
 
@@ -98,10 +97,9 @@ Interlude is a fork of [Metrolist](https://github.com/MetrolistGroup/Metrolist).
   * Transparent
   * Gradient
   * Opaque
-    
 * Adjustable roundedness for song thumbnails.
 * Redesigned bottom navigation bar with a subtle fade into the content above.
-
+* Home screen loading animation that smoothly fades content in when ready.
 
 ### More
 
@@ -146,7 +144,8 @@ If multiple APKs are present in the directory, install the desired APK by its fi
 
 Interlude is actively being developed.
 
-
+* **Seamless Transition** is currently in beta.
+* **Musixmatch** lyrics are currently in beta.
 
 
   
@@ -172,6 +171,6 @@ When opening an issue, please include:
 
 ## License
 
-Interlude is licensed under the **GPL-3.0**.
+Interlude is licensed under the **GPL-3.0**, the same license as Metrolist.
 
 See the [LICENSE](LICENSE) file for details.

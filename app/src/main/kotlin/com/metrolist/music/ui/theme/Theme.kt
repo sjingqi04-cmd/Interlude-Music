@@ -33,7 +33,6 @@ fun MetrolistTheme(
     pureBlack: Boolean = false,
     themeColor: Color = DefaultThemeColor,
     frostedUi: Boolean = false,
-    forceColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
@@ -50,8 +49,7 @@ fun MetrolistTheme(
             seedColor = themeColor, // themeColor is guaranteed non-default here
             isDark = darkTheme,
             specVersion = ColorSpec.SpecVersion.SPEC_2025,
-            // Fidelity keeps the seed's own hue and saturation instead of muting it to a tonal palette
-            style = if (forceColor) PaletteStyle.Fidelity else PaletteStyle.TonalSpot
+            style = PaletteStyle.TonalSpot // Keep existing style
         )
     }
 

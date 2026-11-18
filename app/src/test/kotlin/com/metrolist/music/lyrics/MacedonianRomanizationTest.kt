@@ -1,22 +1,20 @@
 package com.metrolist.music.lyrics
 
+import com.metrolist.music.lyrics.LyricsUtils.detectLanguage
 import com.metrolist.music.lyrics.LyricsUtils.isMacedonian
-import com.metrolist.music.lyrics.LyricsUtils.romanize
 import com.metrolist.music.lyrics.LyricsUtils.romanizeCyrillic
+import com.metrolist.music.lyrics.LyricsUtils.romanizeLine
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.junit.runner.RunWith
-import org.robolectric.RobolectricTestRunner
 
 /**
  * Macedonian writes the stressed forms of "e" and "i" with a grave accent, so that
  * "everything" is spelled differently from "is" and "her" from "and". Both letters are
  * part of the alphabet and appear in ordinary lyrics.
  */
-@RunWith(RobolectricTestRunner::class)
 class MacedonianRomanizationTest {
 
     /** "Everything I have, both a house and a field" - the accent sits on the first word. */
@@ -76,9 +74,8 @@ class MacedonianRomanizationTest {
     @Test
     fun `every line of a song is read with the same alphabet`() = runBlocking {
         val lyrics = macedonianSong.joinToString(System.lineSeparator())
-        val romanized = macedonianSong.map {
-            romanize(lyrics, it, listOf("Macedonian"), romanizeCyrillicByLine = false)
-        }
+        val language = detectLanguage(lyrics, listOf("Macedonian"))
+        val romanized = macedonianSong.map { romanizeLine(it, language) }
 
         romanized.forEachIndexed { index, value ->
             assertNotNull("line ${index + 1} was left unromanised", value)

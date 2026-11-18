@@ -1,22 +1,26 @@
 package com.metrolist.music.recognition
 
+import android.app.Activity
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Shader
+import android.media.projection.MediaProjection
+import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.IBinder
+import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.IntentCompat
 import coil3.ImageLoader
 import coil3.request.ImageRequest
 import coil3.request.allowHardware
@@ -64,6 +68,19 @@ class RecognitionForegroundService : Service() {
 
     private val imageLoader by lazy { ImageLoader.Builder(this).build() }
 
+    private var overlay: RecognitionOverlay? = null
+
+    private var projection: MediaProjection? = null
+
+    private val projectionCallback =
+        object : MediaProjection.Callback() {
+            override fun onStop() {
+                projection = null
+                recognitionJob?.cancel()
+                MusicRecognitionService.reset()
+            }
+        }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -88,6 +105,10 @@ class RecognitionForegroundService : Service() {
                 }
             }
 
+            ACTION_START_PLAYBACK_RECOGNITION -> startPlaybackRecognition(intent)
+
+            ACTION_SHOW_OVERLAY -> showOverlay()
+
             else -> {
                 if (recognitionJob?.isActive != true && startInForeground(widgetMode = false)) {
                     startRecognition()
@@ -98,6 +119,9 @@ class RecognitionForegroundService : Service() {
     }
 
     override fun onDestroy() {
+        overlay?.hide()
+        overlay = null
+        releaseProjection()
         recognitionJob?.cancel()
         statusJob?.cancel()
         pulseJob?.cancel()
@@ -106,7 +130,10 @@ class RecognitionForegroundService : Service() {
         super.onDestroy()
     }
 
-    private fun startInForeground(widgetMode: Boolean): Boolean {
+    private fun startInForeground(
+        widgetMode: Boolean,
+        source: RecognitionSource = RecognitionSource.MICROPHONE,
+    ): Boolean {
         val stopIntent =
             if (widgetMode) {
                 PendingIntent.getService(
@@ -154,7 +181,7 @@ class RecognitionForegroundService : Service() {
                 startForeground(
                     NOTIFICATION_ID,
                     notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
+                    foregroundServiceTypeFor(source),
                 )
             } else {
                 startForeground(NOTIFICATION_ID, notification)
@@ -175,7 +202,10 @@ class RecognitionForegroundService : Service() {
         return false
     }
 
-    private fun startRecognition() {
+    private fun startRecognition(
+        source: RecognitionSource = RecognitionSource.MICROPHONE,
+        projection: MediaProjection? = null,
+    ) {
         if (recognitionJob?.isActive == true) return
         keepNotificationOnStop = false
         terminalStateHandled = false
@@ -190,7 +220,12 @@ class RecognitionForegroundService : Service() {
             }
         recognitionJob =
             serviceScope.launch {
-                val result = MusicRecognitionService.recognize(this@RecognitionForegroundService)
+                val result =
+                    MusicRecognitionService.recognize(
+                        this@RecognitionForegroundService,
+                        source = source,
+                        projection = projection,
+                    )
                 if (
                     result is RecognitionStatus.Error &&
                     MusicRecognitionService.recognitionStatus.value !is RecognitionStatus.Error
@@ -198,6 +233,91 @@ class RecognitionForegroundService : Service() {
                     renderStatus(result)
                 }
             }
+    }
+
+    private fun startPlaybackRecognition(intent: Intent) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        val data =
+            IntentCompat.getParcelableExtra(
+                intent,
+                EXTRA_PROJECTION_RESULT_DATA,
+                Intent::class.java,
+            ) ?: return
+        val resultCode = intent.getIntExtra(EXTRA_PROJECTION_RESULT_CODE, Activity.RESULT_CANCELED)
+
+        // Android 14+ only hands out a usable projection once the service is foreground with
+        // the mediaProjection type, so the type has to be updated before getMediaProjection.
+        if (!startInForeground(widgetMode = false, source = RecognitionSource.PLAYBACK)) return
+
+        releaseProjection()
+        val created =
+            getSystemService(MediaProjectionManager::class.java)
+                .getMediaProjection(resultCode, data)
+        if (created == null) {
+            stopSelf()
+            return
+        }
+        created.registerCallback(projectionCallback, null)
+        projection = created
+        startRecognition(RecognitionSource.PLAYBACK, created)
+    }
+
+    private fun releaseProjection() {
+        val current = projection ?: return
+        projection = null
+        current.unregisterCallback(projectionCallback)
+        current.stop()
+    }
+
+    private fun showOverlay() {
+        if (overlay != null) return
+        if (!Settings.canDrawOverlays(this)) {
+            stopSelf()
+            return
+        }
+        if (!startInForeground(widgetMode = false)) return
+        overlay = RecognitionOverlay(this).also { it.show() }
+        updateNotification(getString(R.string.recognize_music), getString(R.string.tap_to_recognize))
+    }
+
+    fun startOverlayRecognition(source: RecognitionSource) {
+        if (source == RecognitionSource.PLAYBACK) {
+            // The consent dialog needs an Activity; the visible overlay lets us launch one.
+            startActivity(
+                Intent(this, RecognitionProjectionActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                },
+            )
+            return
+        }
+        if (startInForeground(widgetMode = false)) startRecognition(source)
+    }
+
+    fun cancelOverlayRecognition() {
+        recognitionJob?.cancel()
+        recognitionJob = null
+        MusicRecognitionService.reset()
+        updateNotification(getString(R.string.recognize_music), getString(R.string.tap_to_recognize))
+    }
+
+    fun hideOverlay() {
+        cancelOverlayRecognition()
+        dismissOverlay()
+    }
+
+    /** Opens the app on the result, leaving the recognition state intact so it can play in sync. */
+    fun openRecognitionResult(result: RecognitionResult) {
+        startActivity(resultIntent(result))
+        dismissOverlay()
+    }
+
+    private fun dismissOverlay() {
+        overlay?.hide()
+        overlay = null
+        recognitionJob?.cancel()
+        recognitionJob = null
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     private fun renderStatus(status: RecognitionStatus) {
@@ -242,7 +362,8 @@ class RecognitionForegroundService : Service() {
             getString(message),
             isTerminal = true,
         )
-        finishWithPersistentResult()
+        // The overlay shows the message itself and stays up for another attempt.
+        if (overlay == null) finishWithPersistentResult()
     }
 
     private fun handleSuccess(result: RecognitionResult) {
@@ -259,6 +380,7 @@ class RecognitionForegroundService : Service() {
         )
 
         serviceScope.launch {
+            if (overlay != null) persistRecognition(result)
             val coverBitmap =
                 (result.coverArtHqUrl ?: result.coverArtUrl)?.let { url ->
                     withTimeoutOrNull(1_500L) { loadBitmap(url) }
@@ -274,7 +396,7 @@ class RecognitionForegroundService : Service() {
                     actionTitle = getString(R.string.listen_on_metrolist),
                 )
             }
-            finishWithPersistentResult()
+            if (overlay == null) finishWithPersistentResult()
         }
     }
 
@@ -340,6 +462,10 @@ class RecognitionForegroundService : Service() {
             .putInt(PREF_PULSE_FRAME, 0)
             .apply()
 
+        persistRecognition(result)
+    }
+
+    private suspend fun persistRecognition(result: RecognitionResult) {
         runCatching {
             EntryPointAccessors
                 .fromApplication(
@@ -489,15 +615,18 @@ class RecognitionForegroundService : Service() {
         PendingIntent.getActivity(
             this,
             RESULT_PENDING_INTENT_REQUEST_CODE,
-            Intent(this, MainActivity::class.java).apply {
-                action = MainActivity.ACTION_RECOGNITION
-                putExtra(EXTRA_RECOGNITION_TRACK_ID, result.trackId)
-                putExtra(EXTRA_RECOGNITION_TITLE, result.title)
-                putExtra(EXTRA_RECOGNITION_ARTIST, result.artist)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            },
+            resultIntent(result),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+
+    private fun resultIntent(result: RecognitionResult) =
+        Intent(this, MainActivity::class.java).apply {
+            action = MainActivity.ACTION_RECOGNITION
+            putExtra(EXTRA_RECOGNITION_TRACK_ID, result.trackId)
+            putExtra(EXTRA_RECOGNITION_TITLE, result.title)
+            putExtra(EXTRA_RECOGNITION_ARTIST, result.artist)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
 
     private fun finishWithPersistentResult() {
         keepNotificationOnStop = true
@@ -540,7 +669,14 @@ class RecognitionForegroundService : Service() {
 
         const val ACTION_START_WIDGET_RECOGNITION = "com.metrolist.music.widget.recognizer.START"
         const val ACTION_STOP_WIDGET_RECOGNITION = "com.metrolist.music.widget.recognizer.STOP"
+        const val ACTION_START_PLAYBACK_RECOGNITION = "com.metrolist.music.recognition.START_PLAYBACK"
+        const val ACTION_SHOW_OVERLAY = "com.metrolist.music.recognition.SHOW_OVERLAY"
+        const val EXTRA_PROJECTION_RESULT_CODE = "projection_result_code"
+        const val EXTRA_PROJECTION_RESULT_DATA = "projection_result_data"
         const val PREFS_NAME = "recognizer_widget_prefs"
+        const val PREF_OVERLAY_X = "overlay_x"
+        const val PREF_OVERLAY_Y = "overlay_y"
+        const val PREF_OVERLAY_SOURCE = "overlay_source"
         const val PREF_STATE = "state"
         const val PREF_SONG_TITLE = "song_title"
         const val PREF_ARTIST_NAME = "artist_name"

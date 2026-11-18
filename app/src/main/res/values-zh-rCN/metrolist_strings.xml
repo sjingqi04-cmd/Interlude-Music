@@ -855,4 +855,10 @@
     <string name="error_no_internet_connection">没有互联网连接</string>
     <string name="error_offline_playback">您已离线。请连接到互联网，或播放已下载的离线曲目。</string>
     <string name="error_explicit_login_recommended">登录账号后，播放露骨内容的效果会更好。</string>
+    <string name="sleep_timer_off">关闭定时</string>
+    <string name="sleep_timer_custom_minutes">自定义分钟</string>
+    <string name="ai_lyrics_translation_always">自动翻译歌词</string>
+    <string name="ai_lyrics_translation_always_desc">自动将每首歌的歌词翻译成目标语言</string>
+    <string name="sleep_timer_running">定时进行中 · 剩余 %1$s</string>
+    <string name="sleep_timer_not_running">定时未开启</string>
 </resources>

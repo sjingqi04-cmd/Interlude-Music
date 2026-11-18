@@ -65,7 +65,7 @@ import androidx.compose.ui.graphics.RenderEffect
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import com.metrolist.music.ui.icons.painterResource
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -118,10 +118,12 @@ fun SpotifyStylePlayerContent(
     onRepeat: () -> Unit,
     onQueue: () -> Unit,
     onSeek: (Long) -> Unit,
-    showLyrics: Boolean = false,
-    onToggleLyrics: () -> Unit = {},
+    onSleepTimer: () -> Unit = {},
+    sleepTimerActive: Boolean = false,
     isFullScreen: Boolean = false,
     onFullScreen: () -> Unit = {},
+    showLyrics: Boolean = false,
+    onToggleLyrics: () -> Unit = {},
     queueProgress: () -> Float = { 0f },
     overlay: @Composable BoxScope.() -> Unit = {},
     modifier: Modifier = Modifier,
@@ -186,10 +188,7 @@ fun SpotifyStylePlayerContent(
                 .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.8f)))),
         )
 
-        // The lyrics overlay fades out as the queue opens, so it does not sit sharp on top of the blurred queue backdrop.
-        Box(Modifier.fillMaxSize().graphicsLayer { alpha = (1f - queueProgress() * 2f).coerceIn(0f, 1f) }) {
-            overlay()
-        }
+        overlay()
 
         Row(
             Modifier.align(Alignment.TopCenter).fillMaxWidth()
@@ -217,6 +216,13 @@ fun SpotifyStylePlayerContent(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+            }
+            IconButton(onClick = onFullScreen) {
+                Icon(
+                    painterResource(if (isFullScreen) R.drawable.fullscreen_exit else R.drawable.fullscreen),
+                    null,
+                    tint = Color.White,
+                )
             }
             IconButton(onClick = onMore) {
                 Icon(painterResource(R.drawable.more_vert), null, tint = Color.White)
@@ -251,27 +257,13 @@ fun SpotifyStylePlayerContent(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                // With lyrics open the like button becomes the lyrics fullscreen toggle.
-                AnimatedContent(targetState = showLyrics, label = "likeOrFullscreen") { lyricsOpen ->
-                    if (lyricsOpen) {
-                        IconButton(onClick = onFullScreen) {
-                            Icon(
-                                painterResource(if (isFullScreen) R.drawable.fullscreen_exit else R.drawable.fullscreen),
-                                null,
-                                tint = Color.White,
-                                modifier = Modifier.size(28.dp),
-                            )
-                        }
-                    } else {
-                        IconButton(onClick = onFavorite) {
-                            Icon(
-                                painterResource(if (isFavorite) R.drawable.favorite else R.drawable.favorite_border),
-                                null,
-                                tint = Color.White,
-                                modifier = Modifier.size(28.dp),
-                            )
-                        }
-                    }
+                IconButton(onClick = onFavorite) {
+                    Icon(
+                        painterResource(if (isFavorite) R.drawable.favorite else R.drawable.favorite_border),
+                        null,
+                        tint = Color.White,
+                        modifier = Modifier.size(28.dp),
+                    )
                 }
             }
 
@@ -295,93 +287,103 @@ fun SpotifyStylePlayerContent(
                 Text(formatTime(total), color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
             }
 
-            // Fullscreen lyrics: hide the transport buttons and bottom row, keep title and seek bar.
-            AnimatedVisibility(visible = !isFullScreen) {
-            Column {
-            Row(
-                Modifier.fillMaxWidth().padding(top = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
+            AnimatedVisibility(
+                visible = !isFullScreen,
+                enter = fadeIn(tween(300)),
+                exit = fadeOut(tween(300)),
             ) {
-                IconButton(onClick = onShuffle) {
-                    Icon(
-                        painterResource(R.drawable.shuffle),
-                        null,
-                        tint = if (shuffleOn) MaterialTheme.colorScheme.primary else Color.White,
-                    )
-                }
-                IconButton(onClick = onPrevious) {
-                    Icon(painterResource(R.drawable.nm_skip_previous), null, tint = Color.White, modifier = Modifier.size(36.dp))
-                }
-                Box(
-                    Modifier.size(68.dp).clip(CircleShape).background(Color.White).clickable(onClick = onPlayPause),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        painterResource(if (isPlaying) R.drawable.nm_pause else R.drawable.nm_play_arrow),
-                        null,
-                        tint = Color.Black,
-                        modifier = Modifier.size(36.dp),
-                    )
-                }
-                IconButton(onClick = onNext, modifier = Modifier.smoothSkipOnHold()) {
-                    Icon(painterResource(R.drawable.nm_skip_next), null, tint = Color.White, modifier = Modifier.size(36.dp))
-                }
-                IconButton(onClick = onRepeat) {
-                    Icon(
-                        painterResource(
-                            when (repeatMode) {
-                                1 -> R.drawable.repeat_one
-                                else -> R.drawable.repeat
-                            },
-                        ),
-                        null,
-                        tint = if (repeatMode != 0) MaterialTheme.colorScheme.primary else Color.White,
-                    )
-                }
-            }
+                Column {
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        IconButton(onClick = onShuffle) {
+                            Icon(
+                                painterResource(R.drawable.shuffle),
+                                null,
+                                tint = if (shuffleOn) MaterialTheme.colorScheme.primary else Color.White,
+                            )
+                        }
+                        IconButton(onClick = onPrevious) {
+                            Icon(painterResource(R.drawable.nm_skip_previous), null, tint = Color.White, modifier = Modifier.size(36.dp))
+                        }
+                        Box(
+                            Modifier.size(68.dp).clip(CircleShape).background(Color.White).clickable(onClick = onPlayPause),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                painterResource(if (isPlaying) R.drawable.nm_pause else R.drawable.nm_play_arrow),
+                                null,
+                                tint = Color.Black,
+                                modifier = Modifier.size(36.dp),
+                            )
+                        }
+                        IconButton(onClick = onNext, modifier = Modifier.smoothSkipOnHold()) {
+                            Icon(painterResource(R.drawable.nm_skip_next), null, tint = Color.White, modifier = Modifier.size(36.dp))
+                        }
+                        IconButton(onClick = onRepeat) {
+                            Icon(
+                                painterResource(
+                                    when (repeatMode) {
+                                        1 -> R.drawable.repeat_one
+                                        else -> R.drawable.repeat
+                                    },
+                                ),
+                                null,
+                                tint = if (repeatMode != 0) MaterialTheme.colorScheme.primary else Color.White,
+                            )
+                        }
+                    }
 
-            val output = rememberAudioOutput()
-            val menuState = LocalMenuState.current
-            val nowPlaying = listOf(title.uppercase(), artist).filter { it.isNotBlank() }.joinToString(" – ")
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Row(
-                    Modifier.weight(1f).clickable {
-                        menuState.show { AudioOutputMenuContent(nowPlaying) { menuState.dismiss() } }
-                    },
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        painterResource(if (output.isBluetooth) R.drawable.bluetooth else if (output.isWired) R.drawable.headphones else R.drawable.smartphone),
-                        null,
-                        tint = Color.White,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        output.name,
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    val output = rememberAudioOutput()
+                    val menuState = LocalMenuState.current
+                    val nowPlaying = listOf(title.uppercase(), artist).filter { it.isNotBlank() }.joinToString(" – ")
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Row(
+                            Modifier.weight(1f).clickable {
+                                menuState.show { AudioOutputMenuContent(nowPlaying) { menuState.dismiss() } }
+                            },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                painterResource(if (output.isBluetooth) R.drawable.bluetooth else if (output.isWired) R.drawable.headphones else R.drawable.smartphone),
+                                null,
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                output.name,
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        IconButton(onClick = onToggleLyrics) {
+                            Icon(
+                                painterResource(R.drawable.lyrics),
+                                null,
+                                tint = if (showLyrics) MaterialTheme.colorScheme.primary else Color.White,
+                            )
+                        }
+                        IconButton(onClick = onSleepTimer) {
+                            Icon(
+                                painterResource(R.drawable.bedtime),
+                                null,
+                                tint = if (sleepTimerActive) MaterialTheme.colorScheme.primary else Color.White,
+                            )
+                        }
+                        IconButton(onClick = onQueue) {
+                            Icon(painterResource(R.drawable.queue_music), null, tint = Color.White)
+                        }
+                    }
                 }
-                IconButton(onClick = onToggleLyrics) {
-                    Icon(
-                        painterResource(R.drawable.lyrics),
-                        null,
-                        tint = if (showLyrics) MaterialTheme.colorScheme.primary else Color.White,
-                    )
-                }
-                IconButton(onClick = onQueue) {
-                    Icon(painterResource(R.drawable.queue_music), null, tint = Color.White)
-                }
-            }
-            }
             }
         }
     }
@@ -404,16 +406,19 @@ private fun LiveLyricLine(mediaMetadata: MediaMetadata?, positionProvider: () ->
     val scope = rememberCoroutineScope()
     val currentLyrics by playerConnection.currentLyrics.collectAsStateWithLifecycle(initialValue = null)
 
+    val lyricsHelper = remember(context) {
+        EntryPointAccessors
+            .fromApplication(context.applicationContext, com.metrolist.music.di.LyricsHelperEntryPoint::class.java)
+            .lyricsHelper()
+    }
+
     // Same lazy fetch the lyrics pane does, so the live line also works without opening it.
     LaunchedEffect(mediaMetadata?.id, currentLyrics) {
-        if (mediaMetadata != null && currentLyrics == null) {
+        if (mediaMetadata != null && lyricsHelper.needsFetch(currentLyrics, mediaMetadata.id)) {
             delay(500)
             scope.launch(Dispatchers.IO) {
                 try {
-                    val helper = EntryPointAccessors
-                        .fromApplication(context.applicationContext, com.metrolist.music.di.LyricsHelperEntryPoint::class.java)
-                        .lyricsHelper()
-                    val fetched = helper.getLyrics(mediaMetadata)
+                    val fetched = lyricsHelper.getLyrics(mediaMetadata)
                     database.query { upsert(LyricsEntity(mediaMetadata.id, fetched.lyrics, fetched.provider)) }
                 } catch (_: Exception) {
                 }

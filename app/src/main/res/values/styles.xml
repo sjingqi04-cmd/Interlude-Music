@@ -6,10 +6,20 @@
         <item name="android:windowMinWidthMinor">100%</item>
         <item name="android:windowMinWidthMajor">100%</item>
         <item name="android:windowNoTitle">true</item>
-        <item name="android:windowBackground">#ffffff</item>
+        <item name="android:windowBackground">@color/launch_background</item>
         <item name="android:enforceNavigationBarContrast" tools:ignore="NewApi">false</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowAnimationStyle">@style/Animation.Metrolist.Activity</item>
+    </style>
+
+    <!-- Softer, quicker activity transitions than the platform default so entering
+         pages does not feel abrupt. Kept short to avoid perceived lag. -->
+    <style name="Animation.Metrolist.Activity" parent="@android:style/Animation.Activity">
+        <item name="android:activityOpenEnterAnimation">@anim/metrolist_fade_in</item>
+        <item name="android:activityOpenExitAnimation">@anim/metrolist_hold</item>
+        <item name="android:activityCloseEnterAnimation">@anim/metrolist_hold</item>
+        <item name="android:activityCloseExitAnimation">@anim/metrolist_fade_out</item>
     </style>
 
     <!-- Widget Theme with Material 3 colors fallback for API < 31 -->

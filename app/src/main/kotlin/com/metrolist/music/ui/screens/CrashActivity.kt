@@ -36,7 +36,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import com.metrolist.music.ui.icons.painterResource
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -75,7 +75,7 @@ class CrashActivity : ComponentActivity() {
             // Create crash log file
             val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
             val fileName = "metrolist_crash_$timestamp.txt"
-            val crashFile = File(File(cacheDir, "shared").apply { mkdirs() }, fileName)
+            val crashFile = File(cacheDir, fileName)
             crashFile.writeText(crashLog)
             
             // Get URI using FileProvider

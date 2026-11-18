@@ -53,10 +53,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -92,7 +92,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
-import com.metrolist.music.ui.icons.painterResource
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -244,21 +244,17 @@ fun Queue(
     var showSleepTimerDialog by remember { mutableStateOf(false) }
     val sleepTimerDefault by rememberPreference(SleepTimerDefaultKey, 30f)
     var sleepTimerValue by remember { mutableFloatStateOf(sleepTimerDefault) }
-    var customMinutesText by remember { mutableStateOf(sleepTimerDefault.roundToInt().toString()) }
     val isAtDefault by remember {
         derivedStateOf { sleepTimerValue.roundToInt() == sleepTimerDefault.roundToInt() }
     }
-    LaunchedEffect(sleepTimerDefault) {
-        sleepTimerValue = sleepTimerDefault
-        customMinutesText = sleepTimerDefault.roundToInt().toString()
-    }
-    LaunchedEffect(sleepTimerValue) {
-        val shown = sleepTimerValue.roundToInt().toString()
-        if (customMinutesText != shown) customMinutesText = shown
-    }
+    LaunchedEffect(sleepTimerDefault) { sleepTimerValue = sleepTimerDefault }
     val sleepTimerStopAfterCurrentSong by rememberPreference(SleepTimerStopAfterCurrentSongKey, false)
     val sleepTimerFadeOut by rememberPreference(SleepTimerFadeOutKey, false)
+    // Driven by SleepTimer.setActive() through a volatile flag -> exact state.
     val sleepTimerEnabled by playerConnection.service.sleepTimerActive.collectAsStateWithLifecycle()
+    // Dialog-local copy: OK flips it immediately, then it re-syncs from the flow.
+    var dialogTimerOn by remember { mutableStateOf(sleepTimerEnabled) }
+    LaunchedEffect(sleepTimerEnabled) { dialogTimerOn = sleepTimerEnabled }
     var sleepTimerTimeLeft by remember { mutableLongStateOf(0L) }
 
     LaunchedEffect(sleepTimerEnabled) {
@@ -592,21 +588,23 @@ fun Queue(
                     },
                     onDismiss = { showSleepTimerDialog = false },
                     onConfirm = {
-                        showSleepTimerDialog = false
-                        val minutes = customMinutesText.toIntOrNull()?.coerceIn(1, 600)
-                            ?: sleepTimerValue.roundToInt()
-                        playerConnection.service.sleepTimer?.start(
-                            minute = minutes,
-                            stopAfterCurrentSong = sleepTimerStopAfterCurrentSong,
-                            fadeOut = sleepTimerFadeOut,
-                        )
+                        val minutes = sleepTimerValue.roundToInt().coerceIn(1, 600)
+                        val started = runCatching {
+                            playerConnection.service.sleepTimer?.start(
+                                minute = minutes,
+                                stopAfterCurrentSong = sleepTimerStopAfterCurrentSong,
+                                fadeOut = sleepTimerFadeOut,
+                            )
+                        }.isSuccess
+                        // Flip to "running" here as well so it shows before the
+                        // flow round-trips through the service.
+                        if (started) dialogTimerOn = true
                     },
                     onCancel = {
                         showSleepTimerDialog = false
                     },
                     onReset = {
                         sleepTimerValue = sleepTimerDefault
-                        customMinutesText = sleepTimerDefault.roundToInt().toString()
                     },
                     content = {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -624,27 +622,9 @@ fun Queue(
 
                             Slider(
                                 value = sleepTimerValue.coerceIn(5f, 120f),
-                                onValueChange = {
-                                    sleepTimerValue = it
-                                    customMinutesText = it.roundToInt().toString()
-                                },
+                                onValueChange = { sleepTimerValue = it },
                                 valueRange = 5f..120f,
                                 steps = (120 - 5) / 5 - 1,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-
-                            OutlinedTextField(
-                                value = customMinutesText,
-                                onValueChange = { input ->
-                                    val filtered = input.filter { it.isDigit() }.take(3)
-                                    customMinutesText = filtered
-                                    filtered.toIntOrNull()?.coerceIn(1, 600)?.toFloat()?.let {
-                                        sleepTimerValue = it
-                                    }
-                                },
-                                label = { Text(stringResource(R.string.sleep_timer_custom_minutes)) },
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 modifier = Modifier.fillMaxWidth(),
                             )
 
@@ -721,16 +701,47 @@ fun Queue(
                                 }
                             }
 
-                            Spacer(Modifier.height(8.dp))
-                            OutlinedButton(
-                                onClick = {
-                                    // clear() is idempotent: always allow cancelling.
-                                    playerConnection.service.sleepTimer?.clear()
-                                    showSleepTimerDialog = false
+                            // Clear on/off status at a glance: running -> highlighted filled
+                            // button; off -> dimmed, disabled outline button.
+                            Text(
+                                text = if (dialogTimerOn) {
+                                    stringResource(
+                                        R.string.sleep_timer_running,
+                                        makeTimeString(sleepTimerTimeLeft.coerceAtLeast(0L)),
+                                    )
+                                } else {
+                                    stringResource(R.string.sleep_timer_not_running)
                                 },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text(stringResource(R.string.sleep_timer_off))
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (dialogTimerOn) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            if (dialogTimerOn) {
+                                Button(
+                                    onClick = {
+                                        playerConnection.service.sleepTimer?.clear()
+                                        dialogTimerOn = false
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.primary,
+                                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                                    ),
+                                ) {
+                                    Text(stringResource(R.string.sleep_timer_off))
+                                }
+                            } else {
+                                OutlinedButton(
+                                    onClick = {},
+                                    enabled = false,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(stringResource(R.string.sleep_timer_off))
+                                }
                             }
                         }
                     },
@@ -1192,6 +1203,19 @@ fun Queue(
                             Icon(
                                 painter = painterResource(if (locked) R.drawable.lock else R.drawable.lock_open),
                                 contentDescription = null,
+                            )
+                        }
+                        IconButton(
+                            enabled = currentWindowIndex >= 0,
+                            onClick = {
+                                coroutineScope.launch {
+                                    lazyListState.animateScrollToItem(headerItems + currentWindowIndex)
+                                }
+                            },
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.location_on),
+                                contentDescription = stringResource(R.string.locate_playing_song),
                             )
                         }
                         IconButton(

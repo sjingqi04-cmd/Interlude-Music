@@ -3,7 +3,6 @@ package com.metrolist.music.utils
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UpdaterTest {
@@ -16,9 +15,9 @@ class UpdaterTest {
     }
 
     @Test
-    fun updateOnlyWhenLatestIsHigher() {
-        assertTrue(Updater.isUpdateAvailable("1.0", "1.1"))
-        assertTrue(Updater.isUpdateAvailable("1.0", "1.0.1"))
+    fun customBuildNeverOffersAnUpstreamUpdate() {
+        assertFalse(Updater.isUpdateAvailable("1.0", "1.1"))
+        assertFalse(Updater.isUpdateAvailable("1.0", "1.0.1"))
         assertFalse(Updater.isUpdateAvailable("1.0", "1.0"))
         assertFalse(Updater.isUpdateAvailable("1.1", "1.0"))
     }

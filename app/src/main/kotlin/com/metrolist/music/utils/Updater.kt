@@ -72,7 +72,8 @@ object Updater {
      * Returns true if an update is available (latestVersion > currentVersion)
      */
     fun isUpdateAvailable(currentVersion: String, latestVersion: String): Boolean {
-        return compareVersions(latestVersion, currentVersion) > 0
+        // This is a custom build: never surface the upstream "new version" badge or prompt.
+        return false
     }
 
     /**

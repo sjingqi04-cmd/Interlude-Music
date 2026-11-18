@@ -64,7 +64,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import com.metrolist.music.ui.icons.painterResource
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -92,11 +92,7 @@ import com.metrolist.music.models.MediaMetadata
 import com.metrolist.music.playback.ExoDownloadService
 import com.metrolist.music.db.entities.Song
 import com.metrolist.music.db.entities.SpeedDialItem
-import com.metrolist.music.BuildConfig
-import com.metrolist.music.constants.EnableGoogleCastKey
 import com.metrolist.music.ui.component.BottomSheetState
-import com.metrolist.music.ui.component.CastMenuHandle
-import com.metrolist.music.ui.component.CastMenuIcon
 import com.metrolist.music.ui.component.LocalBottomSheetPageState
 import com.metrolist.music.ui.component.ListDialog
 import com.metrolist.music.ui.component.Material3MenuGroup
@@ -119,7 +115,8 @@ fun PlayerMenu(
     isQueueTrigger: Boolean? = false,
     onShowDetailsDialog: () -> Unit,
     onDismiss: () -> Unit,
-    onShowSleepTimer: (() -> Unit)? = null,
+    isFullScreen: Boolean = false,
+    onToggleFullScreen: (() -> Unit)? = null,
 ) {
     mediaMetadata ?: return
     val navController = LocalNavController.current
@@ -146,9 +143,6 @@ fun PlayerMenu(
     val varispeedMode by rememberPreference(VarispeedKey, defaultValue = false)
     val nmShuffle by playerConnection.shuffleModeEnabled.collectAsStateWithLifecycle()
     val nmRepeat by playerConnection.repeatMode.collectAsStateWithLifecycle()
-    val sleepTimerActive by playerConnection.service.sleepTimerActive.collectAsStateWithLifecycle()
-    val (castEnabled) = rememberPreference(EnableGoogleCastKey, defaultValue = true)
-    val castMenuHandle = remember { CastMenuHandle() }
 
     val librarySong by database.song(mediaMetadata.id).collectAsStateWithLifecycle(initialValue = null)
     val coroutineScope = rememberCoroutineScope()
@@ -446,55 +440,26 @@ fun PlayerMenu(
                         } else {
                             null
                         },
-                        if (onShowSleepTimer != null) {
+                        if (onToggleFullScreen != null) {
                             NewAction(
                                 icon = {
                                     Icon(
-                                        painter = painterResource(R.drawable.bedtime),
+                                        painter = painterResource(
+                                            if (isFullScreen) R.drawable.fullscreen_exit else R.drawable.fullscreen,
+                                        ),
                                         contentDescription = null,
                                         modifier = Modifier.size(32.dp),
                                         tint =
-                                            if (sleepTimerActive) {
+                                            if (isFullScreen) {
                                                 MaterialTheme.colorScheme.primary
                                             } else {
                                                 MaterialTheme.colorScheme.onSurfaceVariant
                                             },
                                     )
                                 },
-                                text = stringResource(R.string.sleep_timer),
+                                text = if (isFullScreen) "Exit fullscreen" else "Fullscreen",
                                 onClick = {
-                                    onShowSleepTimer()
-                                    onDismiss()
-                                },
-                            )
-                        } else {
-                            null
-                        },
-                        if (BuildConfig.CAST_AVAILABLE && castEnabled && !isListenTogetherGuest) {
-                            NewAction(
-                                icon = { CastMenuIcon(handle = castMenuHandle) },
-                                text = stringResource(R.string.google_cast),
-                                onClick = {
-                                    castMenuHandle.open()
-                                    onDismiss()
-                                },
-                            )
-                        } else {
-                            null
-                        },
-                        if (onShowSleepTimer != null && sleepTimerActive) {
-                            NewAction(
-                                icon = {
-                                    Icon(
-                                        painter = painterResource(R.drawable.close),
-                                        contentDescription = null,
-                                        modifier = Modifier.size(32.dp),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                },
-                                text = stringResource(R.string.sleep_timer_off),
-                                onClick = {
-                                    playerConnection.service.sleepTimer?.clear()
+                                    onToggleFullScreen()
                                     onDismiss()
                                 },
                             )

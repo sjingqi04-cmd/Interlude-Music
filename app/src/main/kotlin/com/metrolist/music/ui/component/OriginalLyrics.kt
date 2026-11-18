@@ -92,7 +92,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
-import com.metrolist.music.ui.icons.painterResource
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -223,9 +223,9 @@ fun OriginalLyrics(
     val aiProvider by rememberPreference(AiProviderKey, "Free")
     val openRouterBaseUrl by rememberPreference(OpenRouterBaseUrlKey, "https://openrouter.ai/api/v1/chat/completions")
     val openRouterModel by rememberPreference(OpenRouterModelKey, "google/gemini-2.5-flash-lite")
-    val translateLanguage by rememberPreference(TranslateLanguageKey, "en")
+    val translateLanguage by rememberPreference(TranslateLanguageKey, "zh-CN")
     val translateMode by rememberPreference(TranslateModeKey, "Literal")
-    val autoTranslateLyrics by rememberPreference(AutoTranslateLyricsKey, false)
+    val autoTranslateLyrics by rememberPreference(AutoTranslateLyricsKey, true)
     val deeplFormality by rememberPreference(DeeplFormalityKey, "default")
     val aiSystemPrompt by rememberPreference(AiSystemPromptKey, "")
 
@@ -426,7 +426,7 @@ fun OriginalLyrics(
                 provider = aiProvider,
                 deeplApiKey = deeplApiKey,
                 deeplFormality = deeplFormality,
-                useStreaming = true,
+                useStreaming = aiProvider != "Free",
                 songId = currentSong?.id ?: "",
                 database = database,
                 systemPrompt = aiSystemPrompt,
@@ -453,7 +453,7 @@ fun OriginalLyrics(
                     provider = aiProvider,
                     deeplApiKey = deeplApiKey,
                     deeplFormality = deeplFormality,
-                    useStreaming = true,
+                    useStreaming = aiProvider != "Free",
                     songId = currentSong?.id ?: "",
                     database = database,
                     systemPrompt = aiSystemPrompt,
